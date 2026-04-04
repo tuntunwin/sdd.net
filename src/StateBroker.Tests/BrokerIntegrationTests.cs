@@ -14,7 +14,6 @@ public class BrokerIntegrationTests : IAsyncLifetime
 
     public BrokerIntegrationTests()
     {
-        // Pick a random port in ephemeral range
         var listener = new System.Net.Sockets.TcpListener(
             System.Net.IPAddress.Loopback, 0);
         listener.Start();
@@ -29,11 +28,12 @@ public class BrokerIntegrationTests : IAsyncLifetime
         var store = new ShardedStateStore();
         var consensus = new NoopConsensus();
         var sessions = new SessionManager();
+        var router = new TopicRouter();
+        var qos = new QosEngine();
 
-        _broker = new Broker(transport, store, consensus, sessions);
+        _broker = new Broker(transport, store, consensus, sessions, router, qos);
         _brokerTask = _broker.RunAsync(_cts.Token);
 
-        // Give the listener a moment to start
         return Task.Delay(200);
     }
 
@@ -83,6 +83,18 @@ public class BrokerIntegrationTests : IAsyncLifetime
         return JsonSerializer.Deserialize(ms.ToArray(), BrokerJsonContext.Default.Frame);
     }
 
+    private static async Task<List<Frame>> ReceiveFramesAsync(
+        ClientWebSocket ws, int count, TimeSpan? timeout = null)
+    {
+        var frames = new List<Frame>();
+        for (var i = 0; i < count; i++)
+        {
+            var f = await ReceiveFrameAsync(ws, timeout);
+            if (f is not null) frames.Add(f);
+        }
+        return frames;
+    }
+
     // ── Connection ──
 
     [Fact]
@@ -101,8 +113,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         Assert.Equal(WebSocketState.Open, ws1.State);
         Assert.Equal(WebSocketState.Open, ws2.State);
 
-        // Both tracked in session manager
-        await Task.Delay(100); // let broker register sessions
+        await Task.Delay(100);
         Assert.True(_broker.Sessions.Count >= 2);
     }
 
@@ -143,7 +154,6 @@ public class BrokerIntegrationTests : IAsyncLifetime
         await SendFrameAsync(ws, new Frame(
             Frame.Types.Publish, "sensors/temp", Retain: true, Payload: payload));
 
-        // Give broker time to process
         await Task.Delay(100);
 
         var stored = _broker.Store.Get("sensors/temp");
@@ -203,8 +213,149 @@ public class BrokerIntegrationTests : IAsyncLifetime
         await ws.CloseAsync(
             WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
 
-        // Should not crash the broker — verify broker still accepts connections
         using var ws2 = await ConnectAsync("after-close");
         Assert.Equal(WebSocketState.Open, ws2.State);
+    }
+
+    // ── SUBSCRIBE + PUBLISH fan-out ──
+
+    [Fact]
+    public async Task Subscribe_then_publish_delivers()
+    {
+        using var sub = await ConnectAsync("sub-1");
+        using var pub = await ConnectAsync("pub-1");
+
+        // Subscribe
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "events/+"));
+        await Task.Delay(100);
+
+        // Publish (QoS 0)
+        var payload = JsonDocument.Parse("""{"v":42}""").RootElement;
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "events/click", Payload: payload));
+
+        // Subscriber should receive DELIVER
+        var deliver = await ReceiveFrameAsync(sub);
+        Assert.NotNull(deliver);
+        Assert.Equal(Frame.Types.Deliver, deliver!.Type);
+        Assert.Equal("events/click", deliver.Topic);
+        Assert.Equal(42, deliver.Payload.GetProperty("v").GetInt32());
+    }
+
+    [Fact]
+    public async Task Subscribe_receives_retained_state()
+    {
+        using var pub = await ConnectAsync("pub-retain");
+
+        // Publish retained state first
+        var payload = JsonDocument.Parse("100").RootElement;
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "state/counter", Retain: true, Payload: payload));
+        await Task.Delay(100);
+
+        // New subscriber should receive retained state on subscribe
+        using var sub = await ConnectAsync("sub-retain");
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "state/#"));
+
+        var deliver = await ReceiveFrameAsync(sub);
+        Assert.NotNull(deliver);
+        Assert.Equal(Frame.Types.Deliver, deliver!.Type);
+        Assert.Equal("state/counter", deliver.Topic);
+        Assert.True(deliver.Retained);
+        Assert.Equal(100, deliver.Payload.GetInt32());
+    }
+
+    [Fact]
+    public async Task Publish_qos1_creates_outbox_entry()
+    {
+        using var sub = await ConnectAsync("sub-qos1");
+        using var pub = await ConnectAsync("pub-qos1");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "qos/test"));
+        await Task.Delay(100);
+
+        // Publish QoS 1
+        var payload = JsonDocument.Parse("1").RootElement;
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "qos/test", Qos: 1, Payload: payload));
+
+        // Subscriber receives DELIVER
+        var deliver = await ReceiveFrameAsync(sub);
+        Assert.NotNull(deliver);
+        Assert.Equal(Frame.Types.Deliver, deliver!.Type);
+        Assert.NotNull(deliver.MsgId);
+        Assert.Equal(1, deliver.Qos);
+
+        // QoS engine should have pending entry
+        await Task.Delay(50);
+        var pending = _broker.Qos.GetPending("sub-qos1");
+        Assert.True(pending.Count >= 1);
+    }
+
+    [Fact]
+    public async Task Ack_removes_from_outbox()
+    {
+        using var sub = await ConnectAsync("sub-ack");
+        using var pub = await ConnectAsync("pub-ack");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "ack/test"));
+        await Task.Delay(100);
+
+        var payload = JsonDocument.Parse("1").RootElement;
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "ack/test", Qos: 1, Payload: payload));
+
+        var deliver = await ReceiveFrameAsync(sub);
+        Assert.NotNull(deliver?.MsgId);
+
+        // Send ACK
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: deliver!.MsgId));
+        await Task.Delay(100);
+
+        // Outbox should be empty
+        var pending = _broker.Qos.GetPending("sub-ack");
+        Assert.Empty(pending);
+    }
+
+    [Fact]
+    public async Task Multiple_subscribers_all_receive()
+    {
+        using var sub1 = await ConnectAsync("multi-sub-1");
+        using var sub2 = await ConnectAsync("multi-sub-2");
+        using var pub = await ConnectAsync("multi-pub");
+
+        await SendFrameAsync(sub1, new Frame(Frame.Types.Subscribe, "fan/out"));
+        await SendFrameAsync(sub2, new Frame(Frame.Types.Subscribe, "fan/out"));
+        await Task.Delay(100);
+
+        var payload = JsonDocument.Parse("""{"msg":"hello"}""").RootElement;
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "fan/out", Payload: payload));
+
+        var d1 = await ReceiveFrameAsync(sub1);
+        var d2 = await ReceiveFrameAsync(sub2);
+
+        Assert.Equal(Frame.Types.Deliver, d1!.Type);
+        Assert.Equal(Frame.Types.Deliver, d2!.Type);
+        Assert.Equal("fan/out", d1.Topic);
+        Assert.Equal("fan/out", d2.Topic);
+    }
+
+    [Fact]
+    public async Task Wildcard_subscription_receives_matching()
+    {
+        using var sub = await ConnectAsync("wild-sub");
+        using var pub = await ConnectAsync("wild-pub");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "sensors/#"));
+        await Task.Delay(100);
+
+        var payload = JsonDocument.Parse("25").RootElement;
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "sensors/temp/living", Payload: payload));
+
+        var deliver = await ReceiveFrameAsync(sub);
+        Assert.Equal(Frame.Types.Deliver, deliver!.Type);
+        Assert.Equal("sensors/temp/living", deliver.Topic);
     }
 }
