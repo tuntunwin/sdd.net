@@ -41,7 +41,9 @@ await foreach (var entry in wal.ReplayAsync(CancellationToken.None))
 var sessions = new SessionManager(
     config.Session?.SendBufferDepth ?? 256);
 using var router = new TopicRouter();
-var qos = new QosEngine();
+var qos = new QosEngine(
+    config.Qos?.RetryBase,
+    config.Qos?.RetryMax);
 
 await using var transport = new WebSocketTransport(prefix);
 

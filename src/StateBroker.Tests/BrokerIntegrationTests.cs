@@ -29,7 +29,8 @@ public class BrokerIntegrationTests : IAsyncLifetime
         var consensus = new NoopConsensus();
         var sessions = new SessionManager();
         var router = new TopicRouter();
-        var qos = new QosEngine();
+        // Fast retry for tests: 100ms base, 500ms max
+        var qos = new QosEngine(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
         _broker = new Broker(transport, store, consensus, sessions, router, qos);
         _brokerTask = _broker.RunAsync(_cts.Token);
@@ -263,6 +264,9 @@ public class BrokerIntegrationTests : IAsyncLifetime
         Assert.Equal("state/counter", deliver.Topic);
         Assert.True(deliver.Retained);
         Assert.Equal(100, deliver.Payload.GetInt32());
+
+        // Retained pushes are NOT in the QoS outbox
+        Assert.Empty(_broker.Qos.GetPending("sub-retain"));
     }
 
     [Fact]
@@ -357,5 +361,86 @@ public class BrokerIntegrationTests : IAsyncLifetime
         var deliver = await ReceiveFrameAsync(sub);
         Assert.Equal(Frame.Types.Deliver, deliver!.Type);
         Assert.Equal("sensors/temp/living", deliver.Topic);
+    }
+
+    // ── QoS 1 retry ──
+
+    [Fact]
+    public async Task Unacked_qos1_is_retried()
+    {
+        using var sub = await ConnectAsync("sub-retry");
+        using var pub = await ConnectAsync("pub-retry");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "retry/test"));
+        await Task.Delay(100);
+
+        // Publish QoS 1
+        var payload = JsonDocument.Parse("1").RootElement;
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "retry/test", Qos: 1, Payload: payload));
+
+        // Receive first delivery — don't ACK
+        var first = await ReceiveFrameAsync(sub);
+        Assert.NotNull(first);
+        Assert.Equal(Frame.Types.Deliver, first!.Type);
+
+        // Wait for retry (100ms base in test config)
+        var retry = await ReceiveFrameAsync(sub, TimeSpan.FromSeconds(2));
+        Assert.NotNull(retry);
+        Assert.Equal(Frame.Types.Deliver, retry!.Type);
+        Assert.Equal(first.MsgId, retry.MsgId); // same msgId = same frame retried
+
+        // Now ACK — retries should stop
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: first.MsgId));
+        await Task.Delay(300); // wait past retry interval
+        Assert.Empty(_broker.Qos.GetPending("sub-retry"));
+    }
+
+    [Fact]
+    public async Task Retained_state_not_duplicated_on_reconnect()
+    {
+        using var pub = await ConnectAsync("pub-recon");
+
+        // Publish retained state
+        var payload = JsonDocument.Parse("42").RootElement;
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "recon/topic", Retain: true, Payload: payload));
+        await Task.Delay(100);
+
+        // First connection — subscribe, receive retained
+        var ws1 = await ConnectAsync("sub-recon");
+        await SendFrameAsync(ws1, new Frame(Frame.Types.Subscribe, "recon/#"));
+        var d1 = await ReceiveFrameAsync(ws1);
+        Assert.NotNull(d1);
+        Assert.True(d1!.Retained);
+
+        // Disconnect without ACKing (retained pushes have no msgId anyway)
+        await ws1.CloseAsync(
+            System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await Task.Delay(200);
+
+        // Second connection — same clientId, resubscribe
+        using var ws2 = await ConnectAsync("sub-recon");
+        await SendFrameAsync(ws2, new Frame(Frame.Types.Subscribe, "recon/#"));
+
+        // Should receive exactly ONE retained delivery, not duplicated
+        var d2 = await ReceiveFrameAsync(ws2);
+        Assert.NotNull(d2);
+        Assert.Equal("recon/topic", d2!.Topic);
+        Assert.True(d2.Retained);
+        Assert.Equal(42, d2.Payload.GetInt32());
+
+        // No more frames should arrive (give it time to check)
+        try
+        {
+            var extra = await ReceiveFrameAsync(ws2, TimeSpan.FromMilliseconds(500));
+            // If we get here, it should NOT be another retained delivery for recon/topic
+            Assert.True(extra is null || extra.Topic != "recon/topic",
+                "Should not receive duplicate retained delivery");
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected — no extra frames
+        }
     }
 }

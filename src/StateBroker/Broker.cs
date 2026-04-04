@@ -46,9 +46,9 @@ public sealed class Broker
         using var connCts = CancellationTokenSource.CreateLinkedTokenSource(ct, session.CancellationToken);
         var lct = connCts.Token;
 
-        // Replay pending QoS 1 frames on reconnect
-        foreach (var pending in _qos.GetPending(conn.ClientId))
-            session.TrySend(pending);
+        // Start retry loop — re-sends un-ACKed QoS 1 frames with backoff.
+        // Cancels when this connection ends.
+        var retryTask = _qos.StartRetryLoopAsync(conn.ClientId, _sessions, lct);
 
         var writeTask = WriteLoopAsync(conn, session, lct);
         var readTask = ReadLoopAsync(conn, session, lct);
@@ -63,7 +63,8 @@ public sealed class Broker
             await conn.CloseAsync();
             await Task.WhenAll(
                 readTask.ContinueWith(_ => { }, TaskScheduler.Default),
-                writeTask.ContinueWith(_ => { }, TaskScheduler.Default));
+                writeTask.ContinueWith(_ => { }, TaskScheduler.Default),
+                retryTask.ContinueWith(_ => { }, TaskScheduler.Default));
         }
     }
 
@@ -96,7 +97,7 @@ public sealed class Broker
                 break;
 
             case Frame.Types.Subscribe when frame.Topic is not null:
-                await HandleSubscribeAsync(frame, session, ct);
+                HandleSubscribe(frame, session);
                 break;
 
             case Frame.Types.Ack when frame.MsgId is not null:
@@ -127,11 +128,14 @@ public sealed class Broker
         }
     }
 
-    private async ValueTask HandleSubscribeAsync(Frame frame, Session session, CancellationToken ct)
+    private void HandleSubscribe(Frame frame, Session session)
     {
         _router.Subscribe(session.ClientId, frame.Topic!);
 
-        // Push retained state matching the subscription pattern
+        // Push retained state matching the subscription pattern.
+        // These are NOT enqueued in the QoS outbox — retained state is
+        // re-derived from StateStore on every subscribe, so there's no
+        // need to track/retry them. Only live publishes go through outbox.
         foreach (var (topic, payload) in _store.GetAll())
         {
             if (!TopicRouter.Matches(topic, frame.Topic!))
@@ -140,12 +144,9 @@ public sealed class Broker
             var deliver = new Frame(
                 Frame.Types.Deliver,
                 topic,
-                Qos: 1,
-                MsgId: Guid.NewGuid().ToString("N"),
                 Retained: true,
                 Payload: payload);
 
-            await _qos.EnqueueAsync(session.ClientId, deliver, ct);
             session.TrySend(deliver);
         }
     }

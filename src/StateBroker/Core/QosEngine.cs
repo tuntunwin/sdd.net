@@ -5,14 +5,25 @@ namespace StateBroker.Core;
 public sealed class QosEngine : IQosEngine
 {
     private readonly ConcurrentDictionary<string, Outbox> _outboxes = new();
+    private readonly TimeSpan _retryBase;
+    private readonly TimeSpan _retryMax;
+
+    public QosEngine(TimeSpan? retryBase = null, TimeSpan? retryMax = null)
+    {
+        _retryBase = retryBase ?? TimeSpan.FromSeconds(1);
+        _retryMax = retryMax ?? TimeSpan.FromMinutes(1);
+    }
 
     public async ValueTask EnqueueAsync(string clientId, Frame frame, CancellationToken ct)
     {
+        if (frame.Topic is null)
+            throw new ArgumentException("Frame.Topic is required for QoS outbox", nameof(frame));
+
         var outbox = GetOrCreateOutbox(clientId);
         await outbox.Lock.WaitAsync(ct);
         try
         {
-            outbox.Pending.Add(frame);
+            outbox.Pending[frame.Topic] = frame;
         }
         finally
         {
@@ -28,7 +39,17 @@ public sealed class QosEngine : IQosEngine
         await outbox.Lock.WaitAsync(ct);
         try
         {
-            outbox.Pending.RemoveAll(f => f.MsgId == msgId);
+            string? topicToRemove = null;
+            foreach (var kvp in outbox.Pending)
+            {
+                if (kvp.Value.MsgId == msgId)
+                {
+                    topicToRemove = kvp.Key;
+                    break;
+                }
+            }
+            if (topicToRemove is not null)
+                outbox.Pending.Remove(topicToRemove);
         }
         finally
         {
@@ -44,7 +65,7 @@ public sealed class QosEngine : IQosEngine
         outbox.Lock.Wait();
         try
         {
-            return [.. outbox.Pending];
+            return outbox.Pending.Values.ToList();
         }
         finally
         {
@@ -68,12 +89,39 @@ public sealed class QosEngine : IQosEngine
         }
     }
 
+    public async Task StartRetryLoopAsync(
+        string clientId, SessionManager sessions, CancellationToken ct)
+    {
+        var delay = _retryBase;
+
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(delay, ct);
+
+                var pending = GetPending(clientId);
+                if (pending.Count == 0)
+                {
+                    delay = _retryBase;
+                    continue;
+                }
+
+                foreach (var frame in pending)
+                    sessions.TrySend(clientId, frame);
+
+                delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, _retryMax.Ticks));
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
     private Outbox GetOrCreateOutbox(string clientId) =>
         _outboxes.GetOrAdd(clientId, _ => new Outbox());
 
     private sealed class Outbox
     {
         public SemaphoreSlim Lock { get; } = new(1, 1);
-        public List<Frame> Pending { get; } = [];
+        public Dictionary<string, Frame> Pending { get; } = new();
     }
 }

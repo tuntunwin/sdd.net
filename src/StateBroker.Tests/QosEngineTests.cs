@@ -16,16 +16,11 @@ public class QosEngineTests
     [Fact]
     public async Task Enqueue_and_GetPending()
     {
-        var f1 = MakeDeliver("m1");
-        var f2 = MakeDeliver("m2");
-
-        await _qos.EnqueueAsync("c1", f1, CancellationToken.None);
-        await _qos.EnqueueAsync("c1", f2, CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m1", "t1"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m2", "t2"), CancellationToken.None);
 
         var pending = _qos.GetPending("c1");
         Assert.Equal(2, pending.Count);
-        Assert.Equal("m1", pending[0].MsgId);
-        Assert.Equal("m2", pending[1].MsgId);
     }
 
     [Fact]
@@ -46,27 +41,71 @@ public class QosEngineTests
         Assert.Equal(p1.Count, p2.Count);
     }
 
+    // ── Topic deduplication ──
+
+    [Fact]
+    public async Task Enqueue_replaces_same_topic()
+    {
+        var f1 = MakeDeliver("m1", "sensors/temp");
+        var f2 = new Frame(Frame.Types.Deliver, "sensors/temp", Qos: 1, MsgId: "m2",
+            Payload: JsonDocument.Parse("999").RootElement);
+
+        await _qos.EnqueueAsync("c1", f1, CancellationToken.None);
+        await _qos.EnqueueAsync("c1", f2, CancellationToken.None);
+
+        var pending = _qos.GetPending("c1");
+        Assert.Single(pending);
+        Assert.Equal("m2", pending[0].MsgId);
+        Assert.Equal(999, pending[0].Payload.GetInt32());
+    }
+
+    [Fact]
+    public async Task Enqueue_different_topics_accumulates()
+    {
+        await _qos.EnqueueAsync("c1", MakeDeliver("m1", "a"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m2", "b"), CancellationToken.None);
+
+        Assert.Equal(2, _qos.GetPending("c1").Count);
+    }
+
+    [Fact]
+    public async Task Ack_stale_msgId_is_noop()
+    {
+        // Enqueue m1 for topic "t", then m2 replaces it
+        await _qos.EnqueueAsync("c1", MakeDeliver("m1", "t"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m2", "t"), CancellationToken.None);
+
+        // ACK stale m1 — already replaced, should be no-op
+        await _qos.AckAsync("c1", "m1", CancellationToken.None);
+        var pending = _qos.GetPending("c1");
+        Assert.Single(pending);
+        Assert.Equal("m2", pending[0].MsgId);
+
+        // ACK current m2 — removes it
+        await _qos.AckAsync("c1", "m2", CancellationToken.None);
+        Assert.Empty(_qos.GetPending("c1"));
+    }
+
     // ── Ack ──
 
     [Fact]
     public async Task Ack_removes_specific_message()
     {
-        await _qos.EnqueueAsync("c1", MakeDeliver("m1"), CancellationToken.None);
-        await _qos.EnqueueAsync("c1", MakeDeliver("m2"), CancellationToken.None);
-        await _qos.EnqueueAsync("c1", MakeDeliver("m3"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m1", "t1"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m2", "t2"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m3", "t3"), CancellationToken.None);
 
         await _qos.AckAsync("c1", "m2", CancellationToken.None);
 
         var pending = _qos.GetPending("c1");
         Assert.Equal(2, pending.Count);
-        Assert.Equal("m1", pending[0].MsgId);
-        Assert.Equal("m3", pending[1].MsgId);
+        Assert.DoesNotContain(pending, f => f.MsgId == "m2");
     }
 
     [Fact]
     public async Task Ack_unknown_client_is_noop()
     {
-        await _qos.AckAsync("unknown", "m1", CancellationToken.None); // no throw
+        await _qos.AckAsync("unknown", "m1", CancellationToken.None);
     }
 
     [Fact]
@@ -81,8 +120,8 @@ public class QosEngineTests
     [Fact]
     public async Task Ack_all_messages_leaves_empty()
     {
-        await _qos.EnqueueAsync("c1", MakeDeliver("m1"), CancellationToken.None);
-        await _qos.EnqueueAsync("c1", MakeDeliver("m2"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m1", "t1"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m2", "t2"), CancellationToken.None);
 
         await _qos.AckAsync("c1", "m1", CancellationToken.None);
         await _qos.AckAsync("c1", "m2", CancellationToken.None);
@@ -95,8 +134,8 @@ public class QosEngineTests
     [Fact]
     public async Task Evict_clears_outbox()
     {
-        await _qos.EnqueueAsync("c1", MakeDeliver("m1"), CancellationToken.None);
-        await _qos.EnqueueAsync("c1", MakeDeliver("m2"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m1", "t1"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m2", "t2"), CancellationToken.None);
 
         await _qos.EvictAsync("c1", CancellationToken.None);
 
@@ -106,7 +145,7 @@ public class QosEngineTests
     [Fact]
     public async Task Evict_unknown_client_is_noop()
     {
-        await _qos.EvictAsync("unknown", CancellationToken.None); // no throw
+        await _qos.EvictAsync("unknown", CancellationToken.None);
     }
 
     // ── Multiple clients ──
@@ -114,8 +153,8 @@ public class QosEngineTests
     [Fact]
     public async Task Separate_outboxes_per_client()
     {
-        await _qos.EnqueueAsync("c1", MakeDeliver("m1"), CancellationToken.None);
-        await _qos.EnqueueAsync("c2", MakeDeliver("m2"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m1", "t1"), CancellationToken.None);
+        await _qos.EnqueueAsync("c2", MakeDeliver("m2", "t1"), CancellationToken.None);
 
         Assert.Single(_qos.GetPending("c1"));
         Assert.Single(_qos.GetPending("c2"));
@@ -131,9 +170,9 @@ public class QosEngineTests
     [Fact]
     public async Task Concurrent_enqueue_and_ack()
     {
-        // Enqueue 100 messages
+        // Enqueue 100 messages on distinct topics
         var enqueueTasks = Enumerable.Range(0, 100).Select(i =>
-            _qos.EnqueueAsync("c1", MakeDeliver($"m{i}"), CancellationToken.None).AsTask()
+            _qos.EnqueueAsync("c1", MakeDeliver($"m{i}", $"t/{i}"), CancellationToken.None).AsTask()
         ).ToArray();
         await Task.WhenAll(enqueueTasks);
 
@@ -150,12 +189,120 @@ public class QosEngineTests
     [Fact]
     public async Task Concurrent_enqueue_across_clients()
     {
+        // 10 clients, 10 distinct topics each
         var tasks = Enumerable.Range(0, 100).Select(i =>
-            _qos.EnqueueAsync($"c{i % 10}", MakeDeliver($"m{i}"), CancellationToken.None).AsTask()
+            _qos.EnqueueAsync($"c{i % 10}", MakeDeliver($"m{i}", $"t/{i}"), CancellationToken.None).AsTask()
         ).ToArray();
         await Task.WhenAll(tasks);
 
         for (var c = 0; c < 10; c++)
             Assert.Equal(10, _qos.GetPending($"c{c}").Count);
+    }
+
+    // ── Retry loop ──
+
+    [Fact]
+    public async Task Retry_loop_resends_pending_frames()
+    {
+        var qos = new QosEngine(
+            retryBase: TimeSpan.FromMilliseconds(50),
+            retryMax: TimeSpan.FromMilliseconds(200));
+        var sessions = new SessionManager();
+        var session = sessions.GetOrCreate("c1");
+
+        await qos.EnqueueAsync("c1", MakeDeliver("m1"), CancellationToken.None);
+
+        using var cts = new CancellationTokenSource();
+        var retryTask = qos.StartRetryLoopAsync("c1", sessions, cts.Token);
+
+        await Task.Delay(150);
+
+        Assert.True(session.SendChannel.Reader.TryRead(out var frame));
+        Assert.Equal("m1", frame!.MsgId);
+
+        cts.Cancel();
+        await retryTask;
+    }
+
+    [Fact]
+    public async Task Retry_loop_stops_after_ack()
+    {
+        var qos = new QosEngine(
+            retryBase: TimeSpan.FromMilliseconds(50),
+            retryMax: TimeSpan.FromMilliseconds(200));
+        var sessions = new SessionManager();
+        sessions.GetOrCreate("c1");
+
+        await qos.EnqueueAsync("c1", MakeDeliver("m1"), CancellationToken.None);
+
+        using var cts = new CancellationTokenSource();
+        var retryTask = qos.StartRetryLoopAsync("c1", sessions, cts.Token);
+
+        await qos.AckAsync("c1", "m1", CancellationToken.None);
+        await Task.Delay(200);
+
+        Assert.Empty(qos.GetPending("c1"));
+
+        cts.Cancel();
+        await retryTask;
+    }
+
+    [Fact]
+    public async Task Retry_loop_cancels_on_disconnect()
+    {
+        var qos = new QosEngine(
+            retryBase: TimeSpan.FromMilliseconds(50),
+            retryMax: TimeSpan.FromMilliseconds(200));
+        var sessions = new SessionManager();
+        sessions.GetOrCreate("c1");
+
+        await qos.EnqueueAsync("c1", MakeDeliver("m1"), CancellationToken.None);
+
+        using var cts = new CancellationTokenSource();
+        var retryTask = qos.StartRetryLoopAsync("c1", sessions, cts.Token);
+
+        cts.Cancel();
+        await retryTask;
+    }
+
+    [Fact]
+    public async Task Retry_only_sends_latest_value_per_topic()
+    {
+        var qos = new QosEngine(
+            retryBase: TimeSpan.FromMilliseconds(50),
+            retryMax: TimeSpan.FromMilliseconds(200));
+        var sessions = new SessionManager();
+        var session = sessions.GetOrCreate("c1");
+
+        // Publish 222 then 333 to same topic — only 333 should be retried
+        var f1 = new Frame(Frame.Types.Deliver, "sensors/temp", Qos: 1, MsgId: "m1",
+            Payload: JsonDocument.Parse("222").RootElement);
+        var f2 = new Frame(Frame.Types.Deliver, "sensors/temp", Qos: 1, MsgId: "m2",
+            Payload: JsonDocument.Parse("333").RootElement);
+
+        await qos.EnqueueAsync("c1", f1, CancellationToken.None);
+        await qos.EnqueueAsync("c1", f2, CancellationToken.None);
+
+        Assert.Single(qos.GetPending("c1"));
+
+        using var cts = new CancellationTokenSource();
+        var retryTask = qos.StartRetryLoopAsync("c1", sessions, cts.Token);
+
+        await Task.Delay(150);
+
+        // Drain all retried frames — all should be the latest value only
+        var frames = new List<Frame>();
+        while (session.SendChannel.Reader.TryRead(out var f))
+            frames.Add(f);
+
+        Assert.True(frames.Count >= 1);
+        Assert.All(frames, f =>
+        {
+            Assert.Equal("m2", f.MsgId);
+            Assert.Equal(333, f.Payload.GetInt32());
+        });
+
+        cts.Cancel();
+        await retryTask;
     }
 }
