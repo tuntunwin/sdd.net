@@ -263,9 +263,18 @@ public class BrokerIntegrationTests : IAsyncLifetime
         Assert.Equal(Frame.Types.Deliver, deliver!.Type);
         Assert.Equal("state/counter", deliver.Topic);
         Assert.True(deliver.Retained);
+        Assert.Equal(1, deliver.Qos);
+        Assert.NotNull(deliver.MsgId);
         Assert.Equal(100, deliver.Payload.GetInt32());
 
-        // Retained pushes are NOT in the QoS outbox
+        // Retained push is in the QoS outbox (QoS 1, requires ACK)
+        var pending = _broker.Qos.GetPending("sub-retain");
+        Assert.Single(pending);
+        Assert.Equal(deliver.MsgId, pending[0].MsgId);
+
+        // ACK clears outbox
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: deliver.MsgId));
+        await Task.Delay(100);
         Assert.Empty(_broker.Qos.GetPending("sub-retain"));
     }
 
@@ -407,41 +416,45 @@ public class BrokerIntegrationTests : IAsyncLifetime
             Frame.Types.Publish, "recon/topic", Retain: true, Payload: payload));
         await Task.Delay(100);
 
-        // First connection — subscribe, receive retained
+        // First connection — subscribe, receive retained (now QoS 1)
         var ws1 = await ConnectAsync("sub-recon");
         await SendFrameAsync(ws1, new Frame(Frame.Types.Subscribe, "recon/#"));
         var d1 = await ReceiveFrameAsync(ws1);
         Assert.NotNull(d1);
         Assert.True(d1!.Retained);
+        Assert.NotNull(d1.MsgId);
 
-        // Disconnect without ACKing (retained pushes have no msgId anyway)
+        // Disconnect without ACKing — outbox has the retained push
         await ws1.CloseAsync(
             System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
         await Task.Delay(200);
 
         // Second connection — same clientId, resubscribe
+        // EnqueueAsync replaces the stale outbox entry with a fresh retained push
         using var ws2 = await ConnectAsync("sub-recon");
         await SendFrameAsync(ws2, new Frame(Frame.Types.Subscribe, "recon/#"));
 
-        // Should receive exactly ONE retained delivery, not duplicated
+        // Should receive exactly ONE retained delivery (new MsgId from fresh push)
         var d2 = await ReceiveFrameAsync(ws2);
         Assert.NotNull(d2);
         Assert.Equal("recon/topic", d2!.Topic);
         Assert.True(d2.Retained);
         Assert.Equal(42, d2.Payload.GetInt32());
+        Assert.NotNull(d2.MsgId);
 
-        // No more frames should arrive (give it time to check)
+        // ACK it
+        await SendFrameAsync(ws2, new Frame(Frame.Types.Ack, MsgId: d2.MsgId));
+        await Task.Delay(100);
+        Assert.Empty(_broker.Qos.GetPending("sub-recon"));
+
+        // No duplicate frame should arrive
         try
         {
             var extra = await ReceiveFrameAsync(ws2, TimeSpan.FromMilliseconds(500));
-            // If we get here, it should NOT be another retained delivery for recon/topic
             Assert.True(extra is null || extra.Topic != "recon/topic",
                 "Should not receive duplicate retained delivery");
         }
-        catch (OperationCanceledException)
-        {
-            // Expected — no extra frames
-        }
+        catch (OperationCanceledException) { }
     }
 
     // ── Unacked scenarios ──
@@ -785,14 +798,23 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var ws2 = await ConnectAsync("sub-nodup");
         await SendFrameAsync(ws2, new Frame(Frame.Types.Subscribe, "nodup/#"));
 
-        // Should receive exactly ONE delivery — the retained push
+        // Should receive exactly ONE delivery — the fresh retained push (replaced stale entry)
         var d2 = await ReceiveFrameAsync(ws2);
         Assert.NotNull(d2);
         Assert.Equal("nodup/topic", d2!.Topic);
         Assert.True(d2.Retained);
         Assert.Equal(55, d2.Payload.GetInt32());
+        Assert.NotNull(d2.MsgId);
+        Assert.NotEqual(d1.MsgId, d2.MsgId); // new MsgId from fresh EnqueueAsync
 
-        // Outbox should be empty (stale entry evicted by subscribe)
+        // Outbox has the retained push (QoS 1, needs ACK)
+        await Task.Delay(50);
+        var pendingAfter = _broker.Qos.GetPending("sub-nodup");
+        Assert.Single(pendingAfter);
+        Assert.Equal(d2.MsgId, pendingAfter[0].MsgId);
+
+        // ACK clears it
+        await SendFrameAsync(ws2, new Frame(Frame.Types.Ack, MsgId: d2.MsgId));
         await Task.Delay(50);
         Assert.Empty(_broker.Qos.GetPending("sub-nodup"));
 
@@ -804,5 +826,38 @@ public class BrokerIntegrationTests : IAsyncLifetime
                 "Should not receive duplicate delivery after reconnect");
         }
         catch (OperationCanceledException) { }
+    }
+
+    [Fact]
+    public async Task Retained_push_retried_until_acked()
+    {
+        using var pub = await ConnectAsync("pub-ret-qos");
+
+        // Publish retained state
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "retqos/val", Retain: true,
+            Payload: JsonDocument.Parse("88").RootElement));
+        await Task.Delay(100);
+
+        // Subscribe — retained push is QoS 1
+        using var sub = await ConnectAsync("sub-ret-qos");
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "retqos/#"));
+
+        var first = await ReceiveFrameAsync(sub);
+        Assert.NotNull(first);
+        Assert.True(first!.Retained);
+        Assert.Equal(1, first.Qos);
+        Assert.NotNull(first.MsgId);
+
+        // Don't ACK — wait for retry
+        var retry = await ReceiveFrameAsync(sub, TimeSpan.FromSeconds(2));
+        Assert.NotNull(retry);
+        Assert.Equal(first.MsgId, retry!.MsgId);
+        Assert.Equal(88, retry.Payload.GetInt32());
+
+        // ACK stops retries
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: first.MsgId));
+        await Task.Delay(50);
+        Assert.Empty(_broker.Qos.GetPending("sub-ret-qos"));
     }
 }

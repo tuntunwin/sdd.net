@@ -132,25 +132,24 @@ public sealed class Broker
     {
         _router.Subscribe(session.ClientId, frame.Topic!);
 
-        // Push retained state matching the subscription pattern.
-        // These are NOT enqueued in the QoS outbox — retained state is
-        // re-derived from StateStore on every subscribe, so there's no
-        // need to track/retry them. Only live publishes go through outbox.
+        // Push retained state matching the subscription pattern via QoS 1.
+        // EnqueueAsync replaces any stale outbox entry for the same topic
+        // (dictionary keyed by topic, latest-value-wins). Retry loop will
+        // re-send until the client ACKs — same as MQTT retained delivery.
         foreach (var (topic, payload) in _store.GetAll())
         {
             if (!TopicRouter.Matches(topic, frame.Topic!))
                 continue;
 
-            // Evict any stale outbox entry for this topic — the retained
-            // push below is the authoritative current state.
-            await _qos.EvictTopicAsync(session.ClientId, topic, ct);
-
             var deliver = new Frame(
                 Frame.Types.Deliver,
                 topic,
+                Qos: 1,
+                MsgId: Guid.NewGuid().ToString("N"),
                 Retained: true,
                 Payload: payload);
 
+            await _qos.EnqueueAsync(session.ClientId, deliver, ct);
             session.TrySend(deliver);
         }
     }
