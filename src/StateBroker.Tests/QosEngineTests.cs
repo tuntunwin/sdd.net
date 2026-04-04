@@ -305,4 +305,119 @@ public class QosEngineTests
         cts.Cancel();
         await retryTask;
     }
+
+    [Fact]
+    public async Task Skip_retries_then_ack_clears_outbox()
+    {
+        var qos = new QosEngine(
+            retryBase: TimeSpan.FromMilliseconds(50),
+            retryMax: TimeSpan.FromMilliseconds(200));
+        var sessions = new SessionManager();
+        var session = sessions.GetOrCreate("c1");
+
+        await qos.EnqueueAsync("c1", MakeDeliver("m1"), CancellationToken.None);
+
+        using var cts = new CancellationTokenSource();
+        var retryTask = qos.StartRetryLoopAsync("c1", sessions, cts.Token);
+
+        // Drain 3 retries without ACKing
+        for (var i = 0; i < 3; i++)
+        {
+            await Task.Delay(100);
+            while (session.SendChannel.Reader.TryRead(out _)) { }
+        }
+
+        // Outbox still has the frame
+        Assert.Single(qos.GetPending("c1"));
+
+        // ACK after skipping
+        await qos.AckAsync("c1", "m1", CancellationToken.None);
+        Assert.Empty(qos.GetPending("c1"));
+
+        // Wait to confirm no more retries
+        while (session.SendChannel.Reader.TryRead(out _)) { }
+        await Task.Delay(150);
+        Assert.False(session.SendChannel.Reader.TryRead(out _));
+
+        cts.Cancel();
+        await retryTask;
+    }
+
+    [Fact]
+    public async Task New_value_replaces_during_retry_loop()
+    {
+        var qos = new QosEngine(
+            retryBase: TimeSpan.FromMilliseconds(50),
+            retryMax: TimeSpan.FromMilliseconds(200));
+        var sessions = new SessionManager();
+        var session = sessions.GetOrCreate("c1");
+
+        // Enqueue v1
+        var v1 = new Frame(Frame.Types.Deliver, "s/t", Qos: 1, MsgId: "m1",
+            Payload: JsonDocument.Parse("100").RootElement);
+        await qos.EnqueueAsync("c1", v1, CancellationToken.None);
+
+        using var cts = new CancellationTokenSource();
+        var retryTask = qos.StartRetryLoopAsync("c1", sessions, cts.Token);
+
+        // Let a retry of v1 happen
+        await Task.Delay(100);
+        while (session.SendChannel.Reader.TryRead(out var f))
+            Assert.Equal("m1", f.MsgId);
+
+        // Enqueue v2 on same topic — replaces v1
+        var v2 = new Frame(Frame.Types.Deliver, "s/t", Qos: 1, MsgId: "m2",
+            Payload: JsonDocument.Parse("200").RootElement);
+        await qos.EnqueueAsync("c1", v2, CancellationToken.None);
+
+        // Next retries should be v2 only
+        await Task.Delay(150);
+        var frames = new List<Frame>();
+        while (session.SendChannel.Reader.TryRead(out var fr))
+            frames.Add(fr);
+
+        Assert.True(frames.Count >= 1);
+        Assert.All(frames, fr =>
+        {
+            Assert.Equal("m2", fr.MsgId);
+            Assert.Equal(200, fr.Payload.GetInt32());
+        });
+
+        // ACK v2 — done
+        await qos.AckAsync("c1", "m2", CancellationToken.None);
+        Assert.Empty(qos.GetPending("c1"));
+
+        cts.Cancel();
+        await retryTask;
+    }
+
+    [Fact]
+    public async Task Ack_stale_msgId_during_retry_is_noop()
+    {
+        var qos = new QosEngine(
+            retryBase: TimeSpan.FromMilliseconds(50),
+            retryMax: TimeSpan.FromMilliseconds(200));
+        var sessions = new SessionManager();
+        sessions.GetOrCreate("c1");
+
+        // v1 then v2 on same topic
+        await qos.EnqueueAsync("c1",
+            new Frame(Frame.Types.Deliver, "t", Qos: 1, MsgId: "old",
+                Payload: JsonDocument.Parse("1").RootElement),
+            CancellationToken.None);
+        await qos.EnqueueAsync("c1",
+            new Frame(Frame.Types.Deliver, "t", Qos: 1, MsgId: "new",
+                Payload: JsonDocument.Parse("2").RootElement),
+            CancellationToken.None);
+
+        // ACK stale "old" — no-op
+        await qos.AckAsync("c1", "old", CancellationToken.None);
+        var pending = qos.GetPending("c1");
+        Assert.Single(pending);
+        Assert.Equal("new", pending[0].MsgId);
+
+        // ACK "new" — clears
+        await qos.AckAsync("c1", "new", CancellationToken.None);
+        Assert.Empty(qos.GetPending("c1"));
+    }
 }

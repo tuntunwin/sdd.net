@@ -443,4 +443,311 @@ public class BrokerIntegrationTests : IAsyncLifetime
             // Expected — no extra frames
         }
     }
+
+    // ── Unacked scenarios ──
+
+    [Fact]
+    public async Task Unacked_newer_publish_replaces_older_in_outbox()
+    {
+        using var sub = await ConnectAsync("sub-replace");
+        using var pub = await ConnectAsync("pub-replace");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "state/val"));
+        await Task.Delay(100);
+
+        // Publish 222 then 333 to same topic — don't ACK either
+        var p1 = JsonDocument.Parse("222").RootElement;
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "state/val", Qos: 1, Payload: p1));
+        var d1 = await ReceiveFrameAsync(sub);
+        Assert.Equal(222, d1!.Payload.GetInt32());
+
+        var p2 = JsonDocument.Parse("333").RootElement;
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "state/val", Qos: 1, Payload: p2));
+        var d2 = await ReceiveFrameAsync(sub);
+        Assert.Equal(333, d2!.Payload.GetInt32());
+
+        // Outbox should have only ONE entry — the latest (333)
+        await Task.Delay(50);
+        var pending = _broker.Qos.GetPending("sub-replace");
+        Assert.Single(pending);
+        Assert.Equal(333, pending[0].Payload.GetInt32());
+        Assert.Equal(d2.MsgId, pending[0].MsgId);
+    }
+
+    [Fact]
+    public async Task Unacked_retries_only_latest_value()
+    {
+        using var sub = await ConnectAsync("sub-latest");
+        using var pub = await ConnectAsync("pub-latest");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "latest/test"));
+        await Task.Delay(100);
+
+        // Publish two values to same topic without ACKing
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "latest/test", Qos: 1,
+            Payload: JsonDocument.Parse("111").RootElement));
+        var first = await ReceiveFrameAsync(sub);
+
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "latest/test", Qos: 1,
+            Payload: JsonDocument.Parse("222").RootElement));
+        var second = await ReceiveFrameAsync(sub);
+
+        // Wait for retry — should only get 222, never 111
+        var retry = await ReceiveFrameAsync(sub, TimeSpan.FromSeconds(2));
+        Assert.NotNull(retry);
+        Assert.Equal(222, retry!.Payload.GetInt32());
+        Assert.Equal(second!.MsgId, retry.MsgId);
+    }
+
+    [Fact]
+    public async Task Ack_stale_msgId_after_replace_is_noop()
+    {
+        using var sub = await ConnectAsync("sub-stale");
+        using var pub = await ConnectAsync("pub-stale");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "stale/test"));
+        await Task.Delay(100);
+
+        // Publish v1
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "stale/test", Qos: 1,
+            Payload: JsonDocument.Parse("1").RootElement));
+        var d1 = await ReceiveFrameAsync(sub);
+
+        // Publish v2 — replaces v1 in outbox
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "stale/test", Qos: 1,
+            Payload: JsonDocument.Parse("2").RootElement));
+        var d2 = await ReceiveFrameAsync(sub);
+
+        // ACK the stale v1 msgId — should be no-op, v2 still pending
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: d1!.MsgId));
+        await Task.Delay(100);
+
+        var pending = _broker.Qos.GetPending("sub-stale");
+        Assert.Single(pending);
+        Assert.Equal(d2!.MsgId, pending[0].MsgId);
+
+        // ACK the current v2 — outbox empty
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: d2.MsgId));
+        await Task.Delay(100);
+        Assert.Empty(_broker.Qos.GetPending("sub-stale"));
+    }
+
+    [Fact]
+    public async Task Unacked_multiple_topics_each_retains_latest()
+    {
+        using var sub = await ConnectAsync("sub-multi-topic");
+        using var pub = await ConnectAsync("pub-multi-topic");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "mt/#"));
+        await Task.Delay(100);
+
+        // Publish to two different topics
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "mt/a", Qos: 1,
+            Payload: JsonDocument.Parse("10").RootElement));
+        await ReceiveFrameAsync(sub);
+
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "mt/b", Qos: 1,
+            Payload: JsonDocument.Parse("20").RootElement));
+        await ReceiveFrameAsync(sub);
+
+        // Update mt/a — should replace, mt/b stays
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "mt/a", Qos: 1,
+            Payload: JsonDocument.Parse("11").RootElement));
+        await ReceiveFrameAsync(sub);
+
+        await Task.Delay(50);
+        var pending = _broker.Qos.GetPending("sub-multi-topic");
+        Assert.Equal(2, pending.Count);
+
+        var byTopic = pending.ToDictionary(f => f.Topic!);
+        Assert.Equal(11, byTopic["mt/a"].Payload.GetInt32());
+        Assert.Equal(20, byTopic["mt/b"].Payload.GetInt32());
+    }
+
+    [Fact]
+    public async Task Ack_after_multiple_retries_stops_delivery()
+    {
+        using var sub = await ConnectAsync("sub-late-ack");
+        using var pub = await ConnectAsync("pub-late-ack");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "late/ack"));
+        await Task.Delay(100);
+
+        // Publish QoS 1 — don't ACK
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "late/ack", Qos: 1,
+            Payload: JsonDocument.Parse("42").RootElement));
+
+        // Receive initial delivery
+        var first = await ReceiveFrameAsync(sub);
+        Assert.NotNull(first);
+        Assert.Equal(Frame.Types.Deliver, first!.Type);
+
+        // Let several retries happen (100ms base in test config)
+        var retryCount = 0;
+        for (var i = 0; i < 3; i++)
+        {
+            var retry = await ReceiveFrameAsync(sub, TimeSpan.FromSeconds(2));
+            Assert.NotNull(retry);
+            Assert.Equal(first.MsgId, retry!.MsgId);
+            Assert.Equal(42, retry.Payload.GetInt32());
+            retryCount++;
+        }
+        Assert.Equal(3, retryCount);
+
+        // NOW send ACK
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: first.MsgId));
+        await Task.Delay(50);
+
+        // Outbox should be empty
+        Assert.Empty(_broker.Qos.GetPending("sub-late-ack"));
+
+        // No more deliveries should arrive
+        try
+        {
+            var extra = await ReceiveFrameAsync(sub, TimeSpan.FromMilliseconds(500));
+            Assert.True(extra is null || extra.MsgId != first.MsgId,
+                "Should not receive more retries after ACK");
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected — no more frames
+        }
+    }
+
+    [Fact]
+    public async Task Skip_2_then_ack_stops_retries()
+    {
+        using var sub = await ConnectAsync("sub-skip2");
+        using var pub = await ConnectAsync("pub-skip2");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "skip/test"));
+        await Task.Delay(100);
+
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "skip/test", Qos: 1,
+            Payload: JsonDocument.Parse("77").RootElement));
+
+        // Receive initial delivery — skip
+        var first = await ReceiveFrameAsync(sub);
+        Assert.NotNull(first);
+        Assert.Equal(77, first!.Payload.GetInt32());
+
+        // Skip retry #1
+        var r1 = await ReceiveFrameAsync(sub, TimeSpan.FromSeconds(2));
+        Assert.Equal(first.MsgId, r1!.MsgId);
+
+        // Skip retry #2
+        var r2 = await ReceiveFrameAsync(sub, TimeSpan.FromSeconds(2));
+        Assert.Equal(first.MsgId, r2!.MsgId);
+
+        // ACK on 3rd delivery (after 2 skips)
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: first.MsgId));
+        await Task.Delay(50);
+
+        Assert.Empty(_broker.Qos.GetPending("sub-skip2"));
+
+        // Confirm no more retries arrive
+        try
+        {
+            var extra = await ReceiveFrameAsync(sub, TimeSpan.FromMilliseconds(500));
+            Assert.True(extra is null || extra.MsgId != first.MsgId,
+                "Should not receive retries after ACK");
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    [Fact]
+    public async Task Skip_then_new_value_resets_outbox()
+    {
+        using var sub = await ConnectAsync("sub-skip-reset");
+        using var pub = await ConnectAsync("pub-skip-reset");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "reset/val"));
+        await Task.Delay(100);
+
+        // Publish v1, skip its retries
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "reset/val", Qos: 1,
+            Payload: JsonDocument.Parse("100").RootElement));
+        var d1 = await ReceiveFrameAsync(sub);
+        Assert.Equal(100, d1!.Payload.GetInt32());
+
+        // Let one retry arrive — still v1
+        var r1 = await ReceiveFrameAsync(sub, TimeSpan.FromSeconds(2));
+        Assert.Equal(d1.MsgId, r1!.MsgId);
+        Assert.Equal(100, r1.Payload.GetInt32());
+
+        // Publish v2 — replaces v1 in outbox
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "reset/val", Qos: 1,
+            Payload: JsonDocument.Parse("200").RootElement));
+        var d2 = await ReceiveFrameAsync(sub);
+        Assert.Equal(200, d2!.Payload.GetInt32());
+        Assert.NotEqual(d1.MsgId, d2.MsgId);
+
+        // Outbox should have only v2
+        await Task.Delay(50);
+        var pending = _broker.Qos.GetPending("sub-skip-reset");
+        Assert.Single(pending);
+        Assert.Equal(200, pending[0].Payload.GetInt32());
+
+        // Retry should be v2 only
+        var r2 = await ReceiveFrameAsync(sub, TimeSpan.FromSeconds(2));
+        Assert.Equal(d2.MsgId, r2!.MsgId);
+        Assert.Equal(200, r2.Payload.GetInt32());
+
+        // ACK v2 — stops everything
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: d2.MsgId));
+        await Task.Delay(50);
+        Assert.Empty(_broker.Qos.GetPending("sub-skip-reset"));
+    }
+
+    [Fact]
+    public async Task Ack_stale_msgId_during_retries_keeps_current_pending()
+    {
+        using var sub = await ConnectAsync("sub-stale-retry");
+        using var pub = await ConnectAsync("pub-stale-retry");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "stale/retry"));
+        await Task.Delay(100);
+
+        // Publish v1
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "stale/retry", Qos: 1,
+            Payload: JsonDocument.Parse("1").RootElement));
+        var d1 = await ReceiveFrameAsync(sub);
+
+        // Publish v2 — replaces v1
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "stale/retry", Qos: 1,
+            Payload: JsonDocument.Parse("2").RootElement));
+        var d2 = await ReceiveFrameAsync(sub);
+
+        // Wait for a retry of v2
+        var retry = await ReceiveFrameAsync(sub, TimeSpan.FromSeconds(2));
+        Assert.Equal(d2!.MsgId, retry!.MsgId);
+
+        // ACK stale v1 — no-op, v2 still pending
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: d1!.MsgId));
+        await Task.Delay(100);
+
+        var pending = _broker.Qos.GetPending("sub-stale-retry");
+        Assert.Single(pending);
+        Assert.Equal(d2.MsgId, pending[0].MsgId);
+
+        // ACK v2 — now empty
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: d2.MsgId));
+        await Task.Delay(50);
+        Assert.Empty(_broker.Qos.GetPending("sub-stale-retry"));
+    }
 }

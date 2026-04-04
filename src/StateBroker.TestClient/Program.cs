@@ -9,10 +9,11 @@ var topic = args.Length > 1 ? args[1] : "test/greeting";
 switch (mode)
 {
     case "sub":
-        await RunSubscriber(broker, topic, ack: true);
+        await RunSubscriber(broker, topic, skip: -1); // always ACK
         break;
     case "sub-noack":
-        await RunSubscriber(broker, topic, ack: false);
+        var skip = args.Length > 2 && int.TryParse(args[2], out var s) ? s : 0;
+        await RunSubscriber(broker, topic, skip: skip);
         break;
     case "pub":
         await RunPublisher(broker, topic);
@@ -21,36 +22,52 @@ switch (mode)
         await RunBoth(broker, topic);
         break;
     default:
-        Console.WriteLine("Usage: dotnet run -- <mode> [topic]");
+        Console.WriteLine("Usage: dotnet run -- <mode> [topic] [skip]");
         Console.WriteLine();
         Console.WriteLine("Modes:");
-        Console.WriteLine("  sub        — subscribe and ACK incoming messages");
-        Console.WriteLine("  sub-noack  — subscribe but never ACK (test outbox buildup)");
-        Console.WriteLine("  pub        — publish messages from stdin");
-        Console.WriteLine("  both       — demo: pub/sub with retained state");
+        Console.WriteLine("  sub            — subscribe and ACK every message");
+        Console.WriteLine("  sub-noack      — skip ACK, then ACK after [skip] retries (0 = never ACK)");
+        Console.WriteLine("  pub            — publish messages from stdin");
+        Console.WriteLine("  both           — demo: pub/sub with retained state");
+        Console.WriteLine();
+        Console.WriteLine("Examples:");
+        Console.WriteLine("  dotnet run -- sub-noack \"sensors/#\"      # never ACK");
+        Console.WriteLine("  dotnet run -- sub-noack \"sensors/#\" 3    # ACK after skipping 3");
         break;
 }
 
 // ── Subscriber ──────────────────────────────────────────────────
 
-static async Task RunSubscriber(string broker, string topic, bool ack)
+/// <param name="skip">
+/// -1 = always ACK immediately (sub mode).
+///  0 = never ACK (sub-noack default).
+/// >0 = skip N deliveries per msgId, then ACK.
+/// </param>
+static async Task RunSubscriber(string broker, string topic, int skip)
 {
-    var label = ack ? "sub" : "sub-noack";
-    var clientId = ack ? "subscriber-1" : "subscriber-noack";
+    var alwaysAck = skip < 0;
+    var label = alwaysAck ? "sub" : "sub-noack";
+    var clientId = alwaysAck ? "subscriber-1" : "subscriber-noack";
     using var ws = await ConnectAsync(broker, clientId);
     Console.WriteLine($"[{label}] Connected as {clientId}");
 
     await SendAsync(ws, new Frame(Frame.Types.Subscribe, topic));
     Console.WriteLine($"[{label}] Subscribed to: {topic}");
-    if (!ack)
-        Console.WriteLine($"[{label}] *** ACK disabled — outbox will accumulate ***");
+    if (!alwaysAck)
+    {
+        if (skip == 0)
+            Console.WriteLine($"[{label}] *** ACK disabled — never ACK ***");
+        else
+            Console.WriteLine($"[{label}] *** ACK after skipping {skip} per message ***");
+    }
     Console.WriteLine($"[{label}] Waiting for messages (Ctrl+C to quit)...\n");
 
     using var cts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
     var received = 0;
-    var unacked = 0;
+    // Track skip count per msgId
+    var skipCounts = new Dictionary<string, int>();
 
     try
     {
@@ -69,15 +86,30 @@ static async Task RunSubscriber(string broker, string topic, bool ack)
 
                     if (frame.MsgId is not null)
                     {
-                        if (ack)
+                        if (alwaysAck)
                         {
                             await SendAsync(ws, new Frame(Frame.Types.Ack, MsgId: frame.MsgId));
                             Console.WriteLine($"[{label}]   ACK {frame.MsgId}");
                         }
+                        else if (skip > 0)
+                        {
+                            skipCounts.TryGetValue(frame.MsgId, out var seen);
+                            seen++;
+                            if (seen > skip)
+                            {
+                                await SendAsync(ws, new Frame(Frame.Types.Ack, MsgId: frame.MsgId));
+                                skipCounts.Remove(frame.MsgId);
+                                Console.WriteLine($"[{label}]   ACK {frame.MsgId} (after {skip} skips)");
+                            }
+                            else
+                            {
+                                skipCounts[frame.MsgId] = seen;
+                                Console.WriteLine($"[{label}]   SKIP {seen}/{skip} {frame.MsgId}");
+                            }
+                        }
                         else
                         {
-                            unacked++;
-                            Console.WriteLine($"[{label}]   SKIPPED ACK {frame.MsgId} (unacked={unacked})");
+                            Console.WriteLine($"[{label}]   NO-ACK {frame.MsgId}");
                         }
                     }
                     break;
@@ -94,7 +126,7 @@ static async Task RunSubscriber(string broker, string topic, bool ack)
     }
     catch (OperationCanceledException) { }
 
-    Console.WriteLine($"[{label}] Disconnected. received={received} unacked={unacked}");
+    Console.WriteLine($"[{label}] Disconnected. received={received} pending_skips={skipCounts.Count}");
 }
 
 // ── Publisher ────────────────────────────────────────────────────
