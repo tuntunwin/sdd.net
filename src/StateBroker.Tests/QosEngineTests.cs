@@ -148,6 +148,39 @@ public class QosEngineTests
         await _qos.EvictAsync("unknown", CancellationToken.None);
     }
 
+    // ── EvictTopic ──
+
+    [Fact]
+    public async Task EvictTopic_removes_specific_topic()
+    {
+        await _qos.EnqueueAsync("c1", MakeDeliver("m1", "t1"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m2", "t2"), CancellationToken.None);
+        await _qos.EnqueueAsync("c1", MakeDeliver("m3", "t3"), CancellationToken.None);
+
+        await _qos.EvictTopicAsync("c1", "t2", CancellationToken.None);
+
+        var pending = _qos.GetPending("c1");
+        Assert.Equal(2, pending.Count);
+        Assert.DoesNotContain(pending, f => f.Topic == "t2");
+        Assert.Contains(pending, f => f.Topic == "t1");
+        Assert.Contains(pending, f => f.Topic == "t3");
+    }
+
+    [Fact]
+    public async Task EvictTopic_unknown_client_is_noop()
+    {
+        await _qos.EvictTopicAsync("unknown", "t1", CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task EvictTopic_unknown_topic_is_noop()
+    {
+        await _qos.EnqueueAsync("c1", MakeDeliver("m1", "t1"), CancellationToken.None);
+        await _qos.EvictTopicAsync("c1", "nonexistent", CancellationToken.None);
+
+        Assert.Single(_qos.GetPending("c1"));
+    }
+
     // ── Multiple clients ──
 
     [Fact]

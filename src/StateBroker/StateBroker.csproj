@@ -14,6 +14,10 @@
     <InternalsVisibleTo Include="StateBroker.TestClient" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(EnableRaft)' == 'true'">
     <PackageReference Include="DotNext.Net.Cluster" Version="5.*" />
   </ItemGroup>

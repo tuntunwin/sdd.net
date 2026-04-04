@@ -89,6 +89,22 @@ public sealed class QosEngine : IQosEngine
         }
     }
 
+    public async ValueTask EvictTopicAsync(string clientId, string topic, CancellationToken ct)
+    {
+        if (!_outboxes.TryGetValue(clientId, out var outbox))
+            return;
+
+        await outbox.Lock.WaitAsync(ct);
+        try
+        {
+            outbox.Pending.Remove(topic);
+        }
+        finally
+        {
+            outbox.Lock.Release();
+        }
+    }
+
     public async Task StartRetryLoopAsync(
         string clientId, SessionManager sessions, CancellationToken ct)
     {

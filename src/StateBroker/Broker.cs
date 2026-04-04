@@ -97,7 +97,7 @@ public sealed class Broker
                 break;
 
             case Frame.Types.Subscribe when frame.Topic is not null:
-                HandleSubscribe(frame, session);
+                await HandleSubscribeAsync(frame, session, ct);
                 break;
 
             case Frame.Types.Ack when frame.MsgId is not null:
@@ -128,7 +128,7 @@ public sealed class Broker
         }
     }
 
-    private void HandleSubscribe(Frame frame, Session session)
+    private async ValueTask HandleSubscribeAsync(Frame frame, Session session, CancellationToken ct)
     {
         _router.Subscribe(session.ClientId, frame.Topic!);
 
@@ -140,6 +140,10 @@ public sealed class Broker
         {
             if (!TopicRouter.Matches(topic, frame.Topic!))
                 continue;
+
+            // Evict any stale outbox entry for this topic — the retained
+            // push below is the authoritative current state.
+            await _qos.EvictTopicAsync(session.ClientId, topic, ct);
 
             var deliver = new Frame(
                 Frame.Types.Deliver,

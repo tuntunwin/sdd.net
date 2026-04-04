@@ -750,4 +750,59 @@ public class BrokerIntegrationTests : IAsyncLifetime
         await Task.Delay(50);
         Assert.Empty(_broker.Qos.GetPending("sub-stale-retry"));
     }
+
+    [Fact]
+    public async Task No_duplicate_on_reconnect_with_pending_outbox()
+    {
+        using var pub = await ConnectAsync("pub-nodup");
+
+        // First connection — subscribe FIRST, then publish QoS 1 retained
+        // so the publish fans out through the router into the outbox
+        var ws1 = await ConnectAsync("sub-nodup");
+        await SendFrameAsync(ws1, new Frame(Frame.Types.Subscribe, "nodup/#"));
+        await Task.Delay(100);
+
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "nodup/topic", Qos: 1, Retain: true,
+            Payload: JsonDocument.Parse("55").RootElement));
+
+        // Receive the QoS 1 deliver (has MsgId, in outbox) — do NOT ACK
+        var d1 = await ReceiveFrameAsync(ws1);
+        Assert.NotNull(d1);
+        Assert.Equal("nodup/topic", d1!.Topic);
+        Assert.NotNull(d1.MsgId);
+
+        // Disconnect
+        await ws1.CloseAsync(
+            System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await Task.Delay(300);
+
+        // Verify outbox still has the pending frame
+        var pendingBefore = _broker.Qos.GetPending("sub-nodup");
+        Assert.Single(pendingBefore);
+
+        // Second connection — same clientId, resubscribe
+        using var ws2 = await ConnectAsync("sub-nodup");
+        await SendFrameAsync(ws2, new Frame(Frame.Types.Subscribe, "nodup/#"));
+
+        // Should receive exactly ONE delivery — the retained push
+        var d2 = await ReceiveFrameAsync(ws2);
+        Assert.NotNull(d2);
+        Assert.Equal("nodup/topic", d2!.Topic);
+        Assert.True(d2.Retained);
+        Assert.Equal(55, d2.Payload.GetInt32());
+
+        // Outbox should be empty (stale entry evicted by subscribe)
+        await Task.Delay(50);
+        Assert.Empty(_broker.Qos.GetPending("sub-nodup"));
+
+        // No duplicate frame should arrive
+        try
+        {
+            var extra = await ReceiveFrameAsync(ws2, TimeSpan.FromMilliseconds(500));
+            Assert.True(extra is null || extra.Topic != "nodup/topic",
+                "Should not receive duplicate delivery after reconnect");
+        }
+        catch (OperationCanceledException) { }
+    }
 }
