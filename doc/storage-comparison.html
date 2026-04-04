@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Storage Engine Comparison — Broker Storage Layer</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=Source+Code+Pro:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:       #f7f5f0;
+  --surface:  #ffffff;
+  --ink:      #1a1c18;
+  --dim:      #8a9080;
+  --rule:     #e0ddd6;
+  --rule2:    #c8c4bc;
+  --forest:   #1e4a2a;
+  --green:    #2e7d40;
+  --lime:     #4caf50;
+  --amber:    #b06820;
+  --red:      #b03028;
+  --blue:     #1a4878;
+  --teal:     #0e6870;
+  --purple:   #5a2e8a;
+  --sand:     #f0ece0;
+  --mono:     'Source Code Pro', monospace;
+  --sans:     'DM Sans', sans-serif;
+  --serif:    'Playfair Display', serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.65; }
+
+/* ── HEADER ── */
+header {
+  background: var(--forest);
+  position: relative;
+  overflow: hidden;
+}
+.header-accent {
+  height: 4px;
+  background: repeating-linear-gradient(90deg, var(--lime) 0, var(--lime) 40px, transparent 40px, transparent 48px);
+}
+.header-inner {
+  padding: 3.5rem 4rem 3rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3rem;
+  align-items: start;
+}
+header::after {
+  content: 'STORAGE';
+  position: absolute; right: 3rem; bottom: -1.5rem;
+  font-family: var(--serif); font-style: italic; font-size: 9rem; font-weight: 900;
+  color: rgba(255,255,255,.04); line-height: 1; pointer-events: none; letter-spacing: -.03em;
+}
+.h-label { font-family: var(--mono); font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase; color: rgba(100,200,120,.6); margin-bottom: .7rem; }
+h1 { font-family: var(--serif); font-size: clamp(2rem, 4vw, 3.2rem); font-weight: 900; color: #e8f4e0; line-height: 1.08; letter-spacing: -.02em; }
+h1 em { font-style: italic; color: rgba(200,255,160,.7); font-weight: 400; }
+.h-sub { margin-top: 1rem; font-size: .9rem; color: rgba(200,220,200,.5); line-height: 1.8; max-width: 560px; }
+.h-tags { margin-top: 1.2rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+.htag { font-family: var(--mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; padding: 3px 9px; border: 1px solid rgba(100,180,100,.2); color: rgba(150,210,150,.5); }
+.htag.ours { border-color: rgba(100,200,120,.5); color: rgba(150,255,150,.7); }
+
+.h-matrix {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+  background: rgba(0,0,0,.3); border: 1px solid rgba(0,0,0,.3);
+  align-self: start; min-width: 190px;
+}
+.hm { background: rgba(0,0,0,.2); padding: .8rem 1rem; text-align: center; }
+.hm-val { font-family: var(--mono); font-size: 1rem; color: rgba(150,255,150,.8); display: block; }
+.hm-key { font-family: var(--mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: rgba(100,150,100,.5); }
+
+/* ── NAV ── */
+nav { background: #162a1c; border-bottom: 1px solid rgba(255,255,255,.06); padding: 0 4rem; display: flex; overflow-x: auto; }
+nav a { font-family: var(--mono); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: rgba(100,150,100,.5); text-decoration: none; padding: .8rem 1rem; border-right: 1px solid rgba(255,255,255,.04); white-space: nowrap; transition: color .15s; }
+nav a:first-child { border-left: 1px solid rgba(255,255,255,.04); }
+nav a:hover { color: rgba(150,255,150,.7); }
+
+/* ── LAYOUT ── */
+.page { max-width: 1200px; margin: 0 auto; padding: 0 4rem 6rem; }
+section { padding: 3.5rem 0; border-bottom: 1px solid var(--rule); }
+section:last-child { border-bottom: none; }
+.sec-hd { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 2rem; }
+.sec-num { font-family: var(--mono); font-size: 9px; letter-spacing: .15em; color: var(--dim); border: 1px solid var(--rule2); padding: 2px 7px; }
+h2 { font-family: var(--serif); font-size: 1.7rem; font-weight: 700; color: var(--forest); letter-spacing: -.01em; }
+h3 { font-family: var(--mono); font-size: 9px; letter-spacing: .18em; text-transform: uppercase; color: var(--green); margin: 2.2rem 0 1rem; padding-bottom: .4rem; border-bottom: 1px solid var(--rule); }
+p { color: #4a5040; font-size: .91rem; line-height: 1.8; margin-bottom: .9rem; }
+p strong { color: var(--ink); }
+code { font-family: var(--mono); font-size: .82em; color: var(--forest); background: rgba(30,74,42,.07); padding: 1px 5px; }
+
+/* ── ACCESS PATTERN DIAGRAM ── */
+.ap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin: 1.5rem 0; }
+.ap-cell { background: var(--surface); padding: 1.2rem 1.3rem; }
+.ap-pct { font-family: var(--serif); font-size: 2.2rem; font-weight: 900; line-height: 1; margin-bottom: .3rem; }
+.ap-pct.write { color: var(--green); }
+.ap-pct.read  { color: var(--blue); }
+.ap-pct.scan  { color: var(--amber); }
+.ap-pct.del   { color: var(--dim); }
+.ap-name { font-family: var(--mono); font-size: .75rem; color: var(--ink); font-weight: 500; margin-bottom: .3rem; }
+.ap-desc { font-size: .8rem; color: #7a8070; line-height: 1.55; }
+
+/* ── ENGINE CARDS ── */
+.engine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.2rem; margin: 1.5rem 0; }
+.eng-card { border: 1px solid var(--rule); background: var(--surface); padding: 1.5rem; position: relative; overflow: hidden; }
+.eng-card.ours { border-color: var(--green); border-width: 2px; }
+.eng-card::before { content: attr(data-struct); position: absolute; bottom: .5rem; right: .8rem; font-family: var(--serif); font-style: italic; font-size: 3rem; font-weight: 900; color: rgba(0,0,0,.04); line-height: 1; pointer-events: none; }
+.eng-badge { font-family: var(--mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; padding: 2px 8px; margin-bottom: .7rem; display: inline-block; }
+.eng-card.ours .eng-badge { background: rgba(30,74,42,.1); color: var(--forest); }
+.eng-rocksdb .eng-badge { background: rgba(26,72,120,.08); color: var(--blue); }
+.eng-leveldb .eng-badge { background: rgba(26,72,120,.06); color: #3a78c8; }
+.eng-lmdb .eng-badge    { background: rgba(14,104,112,.08); color: var(--teal); }
+.eng-faster .eng-badge  { background: rgba(90,46,138,.08); color: var(--purple); }
+.eng-sqlite .eng-badge  { background: rgba(80,60,20,.08); color: var(--amber); }
+.eng-badger .eng-badge  { background: rgba(30,74,42,.06); color: #3a8050; }
+.eng-pebble .eng-badge  { background: rgba(80,30,20,.06); color: #8a4030; }
+.eng-name { font-family: var(--serif); font-size: 1.3rem; font-weight: 700; margin-bottom: .3rem; }
+.eng-card.ours .eng-name { color: var(--forest); }
+.eng-tagline { font-family: var(--mono); font-size: .72rem; color: var(--dim); margin-bottom: .8rem; }
+.eng-desc { font-size: .82rem; color: #5a6050; line-height: 1.65; margin-bottom: 1rem; }
+.eng-stats { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
+.eng-stat { background: var(--sand); padding: .4rem .6rem; }
+.eng-stat-k { font-family: var(--mono); font-size: .68rem; letter-spacing: .08em; color: var(--dim); }
+.eng-stat-v { font-family: var(--mono); font-size: .75rem; color: var(--ink); font-weight: 500; }
+
+/* ── GRAND TABLE ── */
+.grand-wrap { overflow-x: auto; margin: 1.5rem 0; }
+.grand { width: 100%; border-collapse: collapse; min-width: 980px; font-size: .82rem; }
+.grand thead tr:first-child { background: var(--forest); }
+.grand thead tr:first-child th { font-family: var(--mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; padding: .65rem .9rem; text-align: center; color: rgba(180,220,180,.6); border-right: 1px solid rgba(255,255,255,.06); font-weight: 400; }
+.grand thead tr:first-child th:first-child { text-align: left; min-width: 180px; }
+.grand thead tr:first-child th.ours { background: #0e3018; color: rgba(150,255,150,.8); }
+.grand thead tr.sub-hd th { font-family: var(--mono); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; padding: .35rem .9rem; text-align: center; background: #f0ece4; color: var(--dim); border-bottom: 2px solid var(--rule2); border-right: 1px solid var(--rule); }
+.grand thead tr.sub-hd th:first-child { text-align: left; }
+.grand thead tr.sub-hd th.ours { background: #e8f4e0; color: var(--green); }
+.grand td { padding: .65rem .9rem; border-bottom: 1px solid var(--rule); border-right: 1px solid var(--rule); vertical-align: middle; text-align: center; }
+.grand td:first-child { text-align: left; }
+.grand td.ours { background: #f5fbf0; }
+.grand tr:hover td { background: #f2f0e8; }
+.grand tr:hover td.ours { background: #eef8e8; }
+.grand tr.cat td { background: var(--sand); font-family: var(--mono); font-size: 8px; letter-spacing: .15em; text-transform: uppercase; color: var(--dim); padding: .35rem .9rem; border-bottom: 1px solid var(--rule2); }
+.grand tr.cat td.ours { background: #eef6e8; }
+.feat-n { font-weight: 600; color: var(--ink); font-size: .82rem; display: block; }
+.feat-s { font-family: var(--mono); font-size: .7rem; color: var(--dim); display: block; margin-top: .1rem; }
+.note-s { font-size: .72rem; color: var(--dim); display: block; margin-top: .15rem; font-family: var(--mono); }
+.full  { color: var(--green); font-weight: 600; }
+.part  { color: var(--amber); font-weight: 600; }
+.none  { color: var(--red);   font-weight: 600; }
+.info  { font-size: .75rem; color: #6a7060; }
+
+/* ── WRITE AMPLIFICATION ── */
+.wa-chart { margin: 1.5rem 0; border: 1px solid var(--rule); }
+.wa-row { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; border-bottom: 1px solid var(--rule); padding: .7rem 1.2rem; gap: 1rem; }
+.wa-row:last-child { border-bottom: none; }
+.wa-name { font-family: var(--mono); font-size: .75rem; color: var(--ink); }
+.wa-bar-wrap { background: var(--sand); height: 14px; border-radius: 2px; overflow: hidden; }
+.wa-bar { height: 100%; border-radius: 2px; }
+.wa-val { font-family: var(--mono); font-size: .75rem; color: var(--ink); text-align: right; min-width: 60px; }
+
+/* ── CODE ── */
+pre {
+  background: #0e1a10;
+  color: #c0d8b0;
+  font-family: var(--mono);
+  font-size: .75rem;
+  line-height: 1.9;
+  padding: 1.6rem 2rem;
+  overflow-x: auto;
+  border-left: 3px solid var(--green);
+  margin: 1rem 0 1.5rem;
+  position: relative;
+}
+pre .lang { position: absolute; top: .5rem; right: .9rem; font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: #1a3020; }
+.kw  { color: #90c878; }
+.tp  { color: #78b8e8; }
+.fn  { color: #60d0a0; }
+.st  { color: #d0c080; }
+.cm  { color: #284030; font-style: italic; }
+.nm  { color: #f0a060; }
+.at  { color: #e8c060; }
+
+/* ── CALLOUT ── */
+.callout { border-left: 3px solid var(--green); background: rgba(30,74,42,.05); padding: 1rem 1.4rem; margin: 1.2rem 0; font-size: .88rem; color: #4a5a40; line-height: 1.8; }
+.callout strong { font-family: var(--mono); font-size: .73rem; letter-spacing: .1em; text-transform: uppercase; color: var(--green); display: block; margin-bottom: .3rem; }
+.callout.a { border-color: var(--amber); background: rgba(176,104,32,.05); }
+.callout.a strong { color: var(--amber); }
+.callout.r { border-color: var(--red); background: rgba(176,48,40,.05); }
+.callout.r strong { color: var(--red); }
+.callout.b { border-color: var(--blue); background: rgba(26,72,120,.05); }
+.callout.b strong { color: var(--blue); }
+
+/* ── RECOMMENDATION ── */
+.rec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin: 1.5rem 0; }
+.rec-cell { background: var(--surface); padding: 1.2rem 1.4rem; }
+.rec-scenario { font-family: var(--mono); font-size: .75rem; color: var(--forest); font-weight: 600; margin-bottom: .4rem; }
+.rec-pick { font-family: var(--serif); font-size: 1.1rem; font-weight: 700; color: var(--ink); margin-bottom: .3rem; }
+.rec-why { font-size: .8rem; color: #6a7060; line-height: 1.6; }
+
+footer { border-top: 2px solid var(--ink); padding: 1.5rem 4rem; display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9px; letter-spacing: .07em; color: var(--dim); }
+
+@media (max-width: 640px) {
+  header .header-inner, .page, nav, footer { padding-left: 1.2rem; padding-right: 1.2rem; }
+  .header-inner { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="header-accent"></div>
+<header>
+  <div class="header-inner">
+    <div>
+      <p class="h-label">Storage Layer Analysis · Broker Workload Profile</p>
+      <h1>Local WAL vs<br><em>Embedded Storage Engines</em></h1>
+      <p class="h-sub">A workload-specific comparison of our custom WAL+Snapshot design against RocksDB, LevelDB, LMDB, FASTER, SQLite, BadgerDB, and Pebble — measured against the broker's exact access pattern.</p>
+      <div class="h-tags">
+        <span class="htag ours">★ Custom WAL</span>
+        <span class="htag">RocksDB</span>
+        <span class="htag">LevelDB</span>
+        <span class="htag">LMDB</span>
+        <span class="htag">FASTER</span>
+        <span class="htag">SQLite</span>
+        <span class="htag">BadgerDB</span>
+        <span class="htag">Pebble</span>
+      </div>
+    </div>
+    <div class="h-matrix">
+      <div class="hm"><span class="hm-val">8</span><span class="hm-key">Engines</span></div>
+      <div class="hm"><span class="hm-val">12</span><span class="hm-key">Dimensions</span></div>
+      <div class="hm"><span class="hm-val">KV</span><span class="hm-key">Workload</span></div>
+      <div class="hm"><span class="hm-val">2</span><span class="hm-key">Languages</span></div>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <a href="#pattern">Access Pattern</a>
+  <a href="#engines">Engine Overview</a>
+  <a href="#grand">Full Comparison</a>
+  <a href="#amplification">Write Amplification</a>
+  <a href="#integration">Integration Code</a>
+  <a href="#recommendation">Recommendation</a>
+</nav>
+
+<div class="page">
+
+<!-- ── 01 ACCESS PATTERN ── -->
+<section id="pattern">
+  <div class="sec-hd"><span class="sec-num">01</span><h2>Broker Storage Access Pattern</h2></div>
+
+  <p>Before comparing engines, the workload must be profiled precisely. The wrong engine for the access pattern is worse than a simple custom solution. Our broker's storage layer is <strong>not a general-purpose database</strong> — it has very specific characteristics.</p>
+
+  <div class="ap-grid">
+    <div class="ap-cell">
+      <div class="ap-pct write">~55%</div>
+      <div class="ap-name">Sequential WAL Append</div>
+      <div class="ap-desc">Every retained state write appends a JSON entry to the active WAL segment. Fully sequential. The dominant I/O pattern — must be near disk throughput ceiling.</div>
+    </div>
+    <div class="ap-cell">
+      <div class="ap-pct write">~25%</div>
+      <div class="ap-name">Random KV Write (StateStore)</div>
+      <div class="ap-desc">Updating the in-memory retained state map after WAL confirms. Eventually flushed via snapshot. Topics are updated in arbitrary order — random key space.</div>
+    </div>
+    <div class="ap-cell">
+      <div class="ap-pct read">~15%</div>
+      <div class="ap-name">Point Read (GET topic)</div>
+      <div class="ap-desc">New subscriber SUBSCRIBE triggers Get(topic). Must be fast — blocks the subscriber's initial desired-state push. Hot topics may be cached warm in OS page cache.</div>
+    </div>
+    <div class="ap-cell">
+      <div class="ap-pct scan">~4%</div>
+      <div class="ap-name">Full Scan (restart + snapshot)</div>
+      <div class="ap-desc">On broker restart: replay WAL into StateStore. On snapshot: iterate all 64 shards. Infrequent but must complete in seconds, not minutes, for acceptable restart time.</div>
+    </div>
+    <div class="ap-cell">
+      <div class="ap-pct del">~1%</div>
+      <div class="ap-name">Delete (topic clear)</div>
+      <div class="ap-desc">Publishing zero-length payload to a retained topic removes it. Rare. Tombstoned in the WAL. No tombstone accumulation concern at this volume.</div>
+    </div>
+  </div>
+
+  <div class="callout b">
+    <strong>Critical Insight</strong>
+    The dominant write path is <strong>sequential WAL append</strong>, not random KV writes. Engines optimised for random writes (LSM-tree compaction overhead) add unnecessary complexity. The actual retained state KV store is <strong>mostly in-memory</strong> — disk is only for durability on crash. This means an engine that prioritises sequential write throughput and fast point reads from an in-memory-backed store is the best fit — not necessarily the engine with the highest benchmark random-write ops.
+  </div>
+</section>
+
+<!-- ── 02 ENGINE OVERVIEW ── -->
+<section id="engines">
+  <div class="sec-hd"><span class="sec-num">02</span><h2>Engine Overview</h2></div>
+
+  <div class="engine-grid">
+
+    <div class="eng-card ours" data-struct="Log">
+      <span class="eng-badge">★ Our Design</span>
+      <div class="eng-name">Custom WAL + Snapshots</div>
+      <div class="eng-tagline">Append-only log · sharded in-memory KV · periodic snapshot</div>
+      <div class="eng-desc">Hand-built for the broker's exact access pattern. Sequential append to NDJSON log, batched fsync every 2ms, sharded in-memory map, periodic snapshot for fast restart. Zero external dependencies.</div>
+      <div class="eng-stats">
+        <div class="eng-stat"><div class="eng-stat-k">Struct</div><div class="eng-stat-v">Append log</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Native dep</div><div class="eng-stat-v">None</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Compression</div><div class="eng-stat-v">None</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Write amp</div><div class="eng-stat-v">1× (ideal)</div></div>
+      </div>
+    </div>
+
+    <div class="eng-card eng-rocksdb" data-struct="LSM">
+      <span class="eng-badge">Facebook / Meta</span>
+      <div class="eng-name">RocksDB</div>
+      <div class="eng-tagline">LSM-tree · compaction · Snappy/LZ4/Zstd compression</div>
+      <div class="eng-desc">Production-grade LSM-tree KV store. Excellent for write-heavy random-key workloads with compression. Used by Cassandra, MySQL MyRocks, TiKV. C++ core — requires native bindings in .NET/Go.</div>
+      <div class="eng-stats">
+        <div class="eng-stat"><div class="eng-stat-k">Struct</div><div class="eng-stat-v">LSM-tree</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Native dep</div><div class="eng-stat-v">C++ librocksdb</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Compression</div><div class="eng-stat-v">Snappy/LZ4/Zstd</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Write amp</div><div class="eng-stat-v">10–30×</div></div>
+      </div>
+    </div>
+
+    <div class="eng-card eng-leveldb" data-struct="LSM">
+      <span class="eng-badge">Google</span>
+      <div class="eng-name">LevelDB</div>
+      <div class="eng-tagline">LSM-tree · RocksDB predecessor · simpler config</div>
+      <div class="eng-desc">The original LSM-tree implementation from Google. Simpler than RocksDB — fewer tuning knobs, less overhead. Used by VerneMQ. Single-threaded compaction limits throughput under sustained writes. C++ native required.</div>
+      <div class="eng-stats">
+        <div class="eng-stat"><div class="eng-stat-k">Struct</div><div class="eng-stat-v">LSM-tree</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Native dep</div><div class="eng-stat-v">C++ libleveldb</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Compression</div><div class="eng-stat-v">Snappy</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Write amp</div><div class="eng-stat-v">5–15×</div></div>
+      </div>
+    </div>
+
+    <div class="eng-card eng-lmdb" data-struct="B+">
+      <span class="eng-badge">Symas / OpenLDAP</span>
+      <div class="eng-name">LMDB</div>
+      <div class="eng-tagline">Memory-mapped B+ tree · MVCC · zero-copy reads</div>
+      <div class="eng-desc">Lightning Memory-mapped Database. The fastest embedded KV for read-heavy workloads — zero-copy reads via mmap. MVCC gives concurrent readers without locks. Write throughput lower than LSM-tree for random updates. C library, very portable.</div>
+      <div class="eng-stats">
+        <div class="eng-stat"><div class="eng-stat-k">Struct</div><div class="eng-stat-v">B+ tree (mmap)</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Native dep</div><div class="eng-stat-v">C liblmdb</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Compression</div><div class="eng-stat-v">None (mmap)</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Write amp</div><div class="eng-stat-v">2–4× (B-tree)</div></div>
+      </div>
+    </div>
+
+    <div class="eng-card eng-faster" data-struct="HLog">
+      <span class="eng-badge">Microsoft Research</span>
+      <div class="eng-name">Microsoft FASTER</div>
+      <div class="eng-tagline">Hybrid log · pure .NET · in-memory tier + disk spillover</div>
+      <div class="eng-desc">Designed for high-throughput concurrent KV at the .NET layer. Hybrid log keeps hot records in memory, spills cold records to disk automatically. Pure C# — zero native dependencies. Excellent fit for .NET broker. Read/modify/write operations with latch-free concurrency.</div>
+      <div class="eng-stats">
+        <div class="eng-stat"><div class="eng-stat-k">Struct</div><div class="eng-stat-v">Hybrid log</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Native dep</div><div class="eng-stat-v">None (pure C#)</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Compression</div><div class="eng-stat-v">Optional</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Write amp</div><div class="eng-stat-v">~1–2×</div></div>
+      </div>
+    </div>
+
+    <div class="eng-card eng-sqlite" data-struct="B+">
+      <span class="eng-badge">D. Richard Hipp</span>
+      <div class="eng-name">SQLite (WAL mode)</div>
+      <div class="eng-tagline">B+ tree · ACID · WAL journal · ubiquitous</div>
+      <div class="eng-desc">Mature, battle-tested embedded database. WAL mode gives concurrent readers while writing. Simple KV via a table with key/value columns. Write throughput limited by B-tree page locking — not ideal for high-frequency state updates. C library, everywhere.</div>
+      <div class="eng-stats">
+        <div class="eng-stat"><div class="eng-stat-k">Struct</div><div class="eng-stat-v">B+ tree</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Native dep</div><div class="eng-stat-v">C libsqlite3</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Compression</div><div class="eng-stat-v">None</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Write amp</div><div class="eng-stat-v">3–6× (ACID)</div></div>
+      </div>
+    </div>
+
+    <div class="eng-card eng-badger" data-struct="LSM">
+      <span class="eng-badge">Dgraph Labs · Go only</span>
+      <div class="eng-name">BadgerDB</div>
+      <div class="eng-tagline">LSM-tree · pure Go · key-value separation (VLOG)</div>
+      <div class="eng-desc">Pure Go LSM-tree KV store. Keys stored in LSM-tree structure; values in separate value log (VLOG) to reduce write amplification for large values. No native dependencies — ideal for Go broker. Slightly higher memory overhead than RocksDB alternatives.</div>
+      <div class="eng-stats">
+        <div class="eng-stat"><div class="eng-stat-k">Struct</div><div class="eng-stat-v">LSM + VLOG</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Native dep</div><div class="eng-stat-v">None (pure Go)</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Compression</div><div class="eng-stat-v">Zstd/Snappy</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Write amp</div><div class="eng-stat-v">3–8×</div></div>
+      </div>
+    </div>
+
+    <div class="eng-card eng-pebble" data-struct="LSM">
+      <span class="eng-badge">CockroachDB · Go only</span>
+      <div class="eng-name">Pebble</div>
+      <div class="eng-tagline">LSM-tree · pure Go · RocksDB-compatible API</div>
+      <div class="eng-desc">CockroachDB's pure-Go replacement for RocksDB. RocksDB-compatible API but no C++ dependency. Better compaction scheduling than BadgerDB. Range iteration and bloom filters. The strongest Go alternative to RocksDB for write-heavy workloads.</div>
+      <div class="eng-stats">
+        <div class="eng-stat"><div class="eng-stat-k">Struct</div><div class="eng-stat-v">LSM-tree</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Native dep</div><div class="eng-stat-v">None (pure Go)</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Compression</div><div class="eng-stat-v">Snappy/Zstd</div></div>
+        <div class="eng-stat"><div class="eng-stat-k">Write amp</div><div class="eng-stat-v">6–20×</div></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ── 03 GRAND TABLE ── -->
+<section id="grand">
+  <div class="sec-hd"><span class="sec-num">03</span><h2>Full Comparison Matrix</h2></div>
+
+  <div class="grand-wrap">
+  <table class="grand">
+    <thead>
+      <tr>
+        <th style="min-width:190px;">Dimension</th>
+        <th class="ours">Custom WAL</th>
+        <th>RocksDB</th>
+        <th>LevelDB</th>
+        <th>LMDB</th>
+        <th>FASTER</th>
+        <th>SQLite</th>
+        <th>BadgerDB</th>
+        <th>Pebble</th>
+      </tr>
+      <tr class="sub-hd">
+        <th>—</th>
+        <th class="ours">Go + .NET</th>
+        <th>Go + .NET</th>
+        <th>Go + .NET</th>
+        <th>Go + .NET</th>
+        <th>.NET only</th>
+        <th>Go + .NET</th>
+        <th>Go only</th>
+        <th>Go only</th>
+      </tr>
+    </thead>
+    <tbody>
+
+      <tr class="cat"><td colspan="9">Dependencies &amp; Portability</td></tr>
+      <tr>
+        <td><span class="feat-n">Native C/C++ dependency</span></td>
+        <td class="ours"><span class="full">✗ None</span></td>
+        <td><span class="none">✓ librocksdb</span><span class="note-s">~8MB .so/.dll</span></td>
+        <td><span class="none">✓ libleveldb</span></td>
+        <td><span class="none">✓ liblmdb</span><span class="note-s">tiny ~50KB</span></td>
+        <td><span class="full">✗ Pure C#</span></td>
+        <td><span class="none">✓ libsqlite3</span><span class="note-s">bundled everywhere</span></td>
+        <td><span class="full">✗ Pure Go</span></td>
+        <td><span class="full">✗ Pure Go</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Single binary deploy</span></td>
+        <td class="ours"><span class="full">✓ Yes</span></td>
+        <td><span class="none">✗ Needs .so</span></td>
+        <td><span class="none">✗ Needs .so</span></td>
+        <td><span class="part">~ Static link possible</span></td>
+        <td><span class="full">✓ Yes (AOT)</span></td>
+        <td><span class="part">~ Static link possible</span></td>
+        <td><span class="full">✓ Yes</span></td>
+        <td><span class="full">✓ Yes</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Windows native support</span></td>
+        <td class="ours"><span class="full">✓ Full</span></td>
+        <td><span class="part">~ Possible, complex build</span></td>
+        <td><span class="part">~ Possible</span></td>
+        <td><span class="part">~ Possible</span></td>
+        <td><span class="full">✓ Full</span></td>
+        <td><span class="full">✓ Full</span></td>
+        <td><span class="full">✓ Full</span></td>
+        <td><span class="full">✓ Full</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">ARM64 / edge devices</span></td>
+        <td class="ours"><span class="full">✓ Full</span></td>
+        <td><span class="part">~ Needs rebuild</span></td>
+        <td><span class="part">~ Needs rebuild</span></td>
+        <td><span class="full">✓ Easy</span></td>
+        <td><span class="full">✓ Full</span></td>
+        <td><span class="full">✓ Full</span></td>
+        <td><span class="full">✓ Full</span></td>
+        <td><span class="full">✓ Full</span></td>
+      </tr>
+
+      <tr class="cat"><td colspan="9">Write Performance</td></tr>
+      <tr>
+        <td><span class="feat-n">Sequential append throughput</span><span class="feat-s">broker's dominant pattern</span></td>
+        <td class="ours"><span class="full">✓ Excellent</span><span class="note-s">near disk ceiling</span></td>
+        <td><span class="part">~ Good</span><span class="note-s">WAL + memtable flush</span></td>
+        <td><span class="part">~ Good</span></td>
+        <td><span class="part">~ Moderate</span><span class="note-s">B-tree page splits</span></td>
+        <td><span class="full">✓ Excellent</span><span class="note-s">hybrid log append</span></td>
+        <td><span class="part">~ Moderate</span><span class="note-s">ACID overhead</span></td>
+        <td><span class="part">~ Good</span></td>
+        <td><span class="part">~ Good</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Random KV write throughput</span></td>
+        <td class="ours"><span class="part">~ In-memory only</span><span class="note-s">WAL is append, not KV</span></td>
+        <td><span class="full">✓ Excellent</span><span class="note-s">LSM memtable absorbs</span></td>
+        <td><span class="part">~ Good</span></td>
+        <td><span class="part">~ Moderate</span></td>
+        <td><span class="full">✓ Excellent</span></td>
+        <td><span class="none">✗ Poor at high freq</span></td>
+        <td><span class="full">✓ Good</span></td>
+        <td><span class="full">✓ Excellent</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Write amplification factor</span></td>
+        <td class="ours"><span class="full">1× append</span></td>
+        <td><span class="none">10–30×</span></td>
+        <td><span class="none">5–15×</span></td>
+        <td><span class="part">2–4×</span></td>
+        <td><span class="full">~1–2×</span></td>
+        <td><span class="part">3–6×</span></td>
+        <td><span class="part">3–8×</span></td>
+        <td><span class="none">6–20×</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Batched fsync / group commit</span></td>
+        <td class="ours"><span class="full">✓ 2ms window</span></td>
+        <td><span class="full">✓ WAL group commit</span></td>
+        <td><span class="part">~ Basic WAL sync</span></td>
+        <td><span class="full">✓ MVCC + nosync option</span></td>
+        <td><span class="full">✓ Epoch commit</span></td>
+        <td><span class="part">~ WAL checkpoint</span></td>
+        <td><span class="full">✓ Batch writes</span></td>
+        <td><span class="full">✓ Batch commits</span></td>
+      </tr>
+
+      <tr class="cat"><td colspan="9">Read Performance</td></tr>
+      <tr>
+        <td><span class="feat-n">Point read (GET topic)</span></td>
+        <td class="ours"><span class="full">✓ In-memory O(1)</span><span class="note-s">sharded map lookup</span></td>
+        <td><span class="part">~ Good</span><span class="note-s">bloom filter + SST</span></td>
+        <td><span class="part">~ Moderate</span><span class="note-s">no concurrent compaction</span></td>
+        <td><span class="full">✓ Excellent</span><span class="note-s">zero-copy mmap</span></td>
+        <td><span class="full">✓ Excellent</span><span class="note-s">in-memory hot tier</span></td>
+        <td><span class="part">~ Good</span></td>
+        <td><span class="part">~ Good</span><span class="note-s">bloom filter</span></td>
+        <td><span class="full">✓ Good</span><span class="note-s">bloom filter</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Full scan (restart replay)</span></td>
+        <td class="ours"><span class="part">~ Sequential read</span><span class="note-s">WAL replay is fast</span></td>
+        <td><span class="full">✓ SST range iteration</span></td>
+        <td><span class="full">✓ Range iteration</span></td>
+        <td><span class="full">✓ B-tree range scan</span></td>
+        <td><span class="part">~ Log scan</span></td>
+        <td><span class="full">✓ Table scan</span></td>
+        <td><span class="full">✓ Range iteration</span></td>
+        <td><span class="full">✓ Range iteration</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Concurrent readers (no lock)</span></td>
+        <td class="ours"><span class="full">✓ RWLS read lock</span></td>
+        <td><span class="full">✓ Snapshot isolation</span></td>
+        <td><span class="part">~ Limited concurrency</span></td>
+        <td><span class="full">✓ MVCC zero-copy</span></td>
+        <td><span class="full">✓ Epoch-based</span></td>
+        <td><span class="full">✓ WAL mode</span></td>
+        <td><span class="full">✓ MVCC</span></td>
+        <td><span class="full">✓ MVCC</span></td>
+      </tr>
+
+      <tr class="cat"><td colspan="9">Durability &amp; Crash Safety</td></tr>
+      <tr>
+        <td><span class="feat-n">Crash-safe writes</span></td>
+        <td class="ours"><span class="full">✓ WAL + fsync</span></td>
+        <td><span class="full">✓ WAL + sync</span></td>
+        <td><span class="full">✓ WAL</span></td>
+        <td><span class="full">✓ ACID</span></td>
+        <td><span class="full">✓ Epoch + log</span></td>
+        <td><span class="full">✓ Full ACID</span></td>
+        <td><span class="full">✓ WAL</span></td>
+        <td><span class="full">✓ WAL</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Snapshot / backup support</span></td>
+        <td class="ours"><span class="full">✓ Custom periodic</span></td>
+        <td><span class="full">✓ Checkpoint API</span></td>
+        <td><span class="part">~ Manual</span></td>
+        <td><span class="full">✓ Copy-on-write</span></td>
+        <td><span class="part">~ Manual checkpoint</span></td>
+        <td><span class="full">✓ Online backup API</span></td>
+        <td><span class="full">✓ Backup API</span></td>
+        <td><span class="full">✓ Checkpoint</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Fast restart (bounded replay)</span></td>
+        <td class="ours"><span class="full">✓ Snapshot + WAL tail</span></td>
+        <td><span class="full">✓ SST files persist</span></td>
+        <td><span class="full">✓ SST files persist</span></td>
+        <td><span class="full">✓ mmap remount</span></td>
+        <td><span class="part">~ Full log replay</span></td>
+        <td><span class="full">✓ WAL checkpoint</span></td>
+        <td><span class="full">✓ SST + WAL</span></td>
+        <td><span class="full">✓ SST + WAL</span></td>
+      </tr>
+
+      <tr class="cat"><td colspan="9">Operational Characteristics</td></tr>
+      <tr>
+        <td><span class="feat-n">Background compaction overhead</span></td>
+        <td class="ours"><span class="full">✗ None</span></td>
+        <td><span class="none">✓ Significant</span><span class="note-s">CPU + I/O spikes</span></td>
+        <td><span class="none">✓ Blocks writes</span><span class="note-s">single-threaded</span></td>
+        <td><span class="full">✗ None (B-tree)</span></td>
+        <td><span class="part">~ Log compaction</span></td>
+        <td><span class="part">~ Checkpoint cost</span></td>
+        <td><span class="part">~ Moderate</span><span class="note-s">VLOG GC</span></td>
+        <td><span class="none">~ Significant</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Memory overhead (idle)</span></td>
+        <td class="ours"><span class="full">Minimal</span><span class="note-s">only the shard maps</span></td>
+        <td><span class="none">High</span><span class="note-s">block cache default 8MB+</span></td>
+        <td><span class="part">Moderate</span></td>
+        <td><span class="full">Low</span><span class="note-s">mmap OS-managed</span></td>
+        <td><span class="part">Configurable</span></td>
+        <td><span class="full">Low</span></td>
+        <td><span class="part">Moderate</span></td>
+        <td><span class="part">Moderate</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Compression support</span></td>
+        <td class="ours"><span class="none">✗ None</span><span class="note-s">raw JSON</span></td>
+        <td><span class="full">✓ Snappy/LZ4/Zstd</span></td>
+        <td><span class="part">~ Snappy only</span></td>
+        <td><span class="none">✗ None</span></td>
+        <td><span class="part">~ Optional</span></td>
+        <td><span class="none">✗ None</span></td>
+        <td><span class="full">✓ Zstd/Snappy</span></td>
+        <td><span class="full">✓ Snappy/Zstd</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat-n">Tuning complexity</span></td>
+        <td class="ours"><span class="full">Low — 3 knobs</span></td>
+        <td><span class="none">Very High</span><span class="note-s">100+ config params</span></td>
+        <td><span class="part">Moderate</span></td>
+        <td><span class="part">Moderate</span></td>
+        <td><span class="part">Moderate</span></td>
+        <td><span class="full">Low</span></td>
+        <td><span class="part">Moderate</span></td>
+        <td><span class="part">Moderate</span></td>
+      </tr>
+
+      <tr class="cat"><td colspan="9">Fit for Broker Workload</td></tr>
+      <tr>
+        <td><span class="feat-n">Overall fit score</span><span class="feat-s">for this broker's pattern</span></td>
+        <td class="ours"><span class="full">★★★★★</span><span class="note-s">purpose-built</span></td>
+        <td><span class="part">★★★☆☆</span><span class="note-s">overkill + native dep</span></td>
+        <td><span class="part">★★★☆☆</span><span class="note-s">simpler but native dep</span></td>
+        <td><span class="full">★★★★☆</span><span class="note-s">excellent reads</span></td>
+        <td><span class="full">★★★★☆</span><span class="note-s">.NET only</span></td>
+        <td><span class="part">★★☆☆☆</span><span class="note-s">not optimised for this</span></td>
+        <td><span class="full">★★★★☆</span><span class="note-s">Go only, pure</span></td>
+        <td><span class="full">★★★☆☆</span><span class="note-s">Go only, heavy</span></td>
+      </tr>
+
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ── 04 WRITE AMPLIFICATION ── -->
+<section id="amplification">
+  <div class="sec-hd"><span class="sec-num">04</span><h2>Write Amplification Breakdown</h2></div>
+
+  <p>Write amplification (WA) is the ratio of bytes written to disk vs bytes in the original write. For our WAL-dominant broker, high WA directly translates to lower throughput and faster SSD wear. LSM-tree engines are the worst offenders due to multi-level compaction.</p>
+
+  <div class="wa-chart">
+    <div class="wa-row" style="background:#f5fbf0;">
+      <div class="wa-name">★ Custom WAL</div>
+      <div class="wa-bar-wrap"><div class="wa-bar" style="width:5%;background:var(--green);"></div></div>
+      <div class="wa-val" style="color:var(--green);">1× append</div>
+    </div>
+    <div class="wa-row">
+      <div class="wa-name">FASTER (.NET)</div>
+      <div class="wa-bar-wrap"><div class="wa-bar" style="width:8%;background:var(--green);"></div></div>
+      <div class="wa-val" style="color:var(--green);">~1–2×</div>
+    </div>
+    <div class="wa-row">
+      <div class="wa-name">LMDB</div>
+      <div class="wa-bar-wrap"><div class="wa-bar" style="width:12%;background:var(--teal);"></div></div>
+      <div class="wa-val" style="color:var(--teal);">2–4×</div>
+    </div>
+    <div class="wa-row">
+      <div class="wa-name">SQLite WAL</div>
+      <div class="wa-bar-wrap"><div class="wa-bar" style="width:18%;background:var(--amber);"></div></div>
+      <div class="wa-val" style="color:var(--amber);">3–6×</div>
+    </div>
+    <div class="wa-row">
+      <div class="wa-name">BadgerDB</div>
+      <div class="wa-bar-wrap"><div class="wa-bar" style="width:22%;background:var(--amber);"></div></div>
+      <div class="wa-val" style="color:var(--amber);">3–8×</div>
+    </div>
+    <div class="wa-row">
+      <div class="wa-name">LevelDB</div>
+      <div class="wa-bar-wrap"><div class="wa-bar" style="width:35%;background:var(--red);"></div></div>
+      <div class="wa-val" style="color:var(--red);">5–15×</div>
+    </div>
+    <div class="wa-row">
+      <div class="wa-name">Pebble</div>
+      <div class="wa-bar-wrap"><div class="wa-bar" style="width:55%;background:var(--red);"></div></div>
+      <div class="wa-val" style="color:var(--red);">6–20×</div>
+    </div>
+    <div class="wa-row">
+      <div class="wa-name">RocksDB</div>
+      <div class="wa-bar-wrap"><div class="wa-bar" style="width:85%;background:var(--red);"></div></div>
+      <div class="wa-val" style="color:var(--red);">10–30×</div>
+    </div>
+  </div>
+
+  <div class="callout a">
+    <strong>Why LSM-tree WA is High for Our Use Case</strong>
+    LSM-tree engines buffer writes in a memory table (MemTable), flush to L0 SSTables, then compact through multiple levels. Each compaction reads and rewrites data. For our broker's use case — where topics are updated frequently but the total key space is modest — the compaction overhead is disproportionate. The broker doesn't need the LSM advantage (absorbing massive random write bursts) because writes flow sequentially through the WAL first anyway.
+  </div>
+</section>
+
+<!-- ── 05 INTEGRATION CODE ── -->
+<section id="integration">
+  <div class="sec-hd"><span class="sec-num">05</span><h2>Integration Code — Swapping the Storage Backend</h2></div>
+
+  <p>All engines plug in behind the same <code>IWalWriter</code> / <code>IStateStore</code> interfaces. Here are the relevant integration patterns for the strongest alternatives.</p>
+
+  <h3>RocksDB — Go (via grocksdb)</h3>
+<pre><span class="lang">Go — RocksDB StateStore</span><span class="cm">// go get github.com/linxGnu/grocksdb
+// Requires librocksdb.so on the host — NOT a single binary</span>
+
+<span class="kw">import</span> <span class="st">"github.com/linxGnu/grocksdb"</span>
+
+<span class="kw">type</span> <span class="tp">RocksStateStore</span> <span class="kw">struct</span> {
+    db   *grocksdb.<span class="tp">DB</span>
+    ro   *grocksdb.<span class="tp">ReadOptions</span>
+    wo   *grocksdb.<span class="tp">WriteOptions</span>
+}
+
+<span class="kw">func</span> <span class="fn">NewRocksStateStore</span>(dir <span class="tp">string</span>) (*<span class="tp">RocksStateStore</span>, <span class="tp">error</span>) {
+    opts := grocksdb.<span class="fn">NewDefaultOptions</span>()
+    opts.<span class="fn">SetCreateIfMissing</span>(<span class="kw">true</span>)
+    opts.<span class="fn">SetCompression</span>(grocksdb.<span class="tp">LZ4Compression</span>)
+    opts.<span class="fn">SetMaxWriteBufferNumber</span>(<span class="nm">4</span>)
+    opts.<span class="fn">SetWriteBufferSize</span>(<span class="nm">64</span> << <span class="nm">20</span>)      <span class="cm">// 64MB memtable</span>
+    opts.<span class="fn">SetLevel0FileNumCompactionTrigger</span>(<span class="nm">4</span>)
+
+    db, err := grocksdb.<span class="fn">OpenDb</span>(opts, dir)
+    <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="kw">return nil</span>, err }
+    wo := grocksdb.<span class="fn">NewDefaultWriteOptions</span>()
+    wo.<span class="fn">SetSync</span>(<span class="kw">false</span>)  <span class="cm">// WAL handles durability — RocksDB is secondary store</span>
+    <span class="kw">return</span> &<span class="tp">RocksStateStore</span>{db: db, ro: grocksdb.<span class="fn">NewDefaultReadOptions</span>(), wo: wo}, <span class="kw">nil</span>
+}
+
+<span class="kw">func</span> (r *<span class="tp">RocksStateStore</span>) <span class="fn">Set</span>(topic <span class="tp">string</span>, payload json.<span class="tp">RawMessage</span>) <span class="tp">error</span> {
+    <span class="kw">return</span> r.db.<span class="fn">Put</span>(r.wo, []<span class="tp">byte</span>(topic), payload)
+}
+<span class="kw">func</span> (r *<span class="tp">RocksStateStore</span>) <span class="fn">Get</span>(topic <span class="tp">string</span>) (json.<span class="tp">RawMessage</span>, <span class="tp">bool</span>) {
+    v, err := r.db.<span class="fn">Get</span>(r.ro, []<span class="tp">byte</span>(topic))
+    <span class="kw">if</span> err != <span class="kw">nil</span> || !v.<span class="fn">Exists</span>() { <span class="kw">return nil</span>, <span class="kw">false</span> }
+    <span class="kw">defer</span> v.<span class="fn">Free</span>()
+    <span class="kw">return</span> <span class="fn">append</span>(json.<span class="tp">RawMessage</span>{}, v.<span class="fn">Data</span>()...), <span class="kw">true</span>
+}</pre>
+
+  <h3>BadgerDB — Go (pure, recommended over RocksDB for this use case)</h3>
+<pre><span class="lang">Go — BadgerDB StateStore</span><span class="cm">// go get github.com/dgraph-io/badger/v4
+// Pure Go — single binary, no native deps</span>
+
+<span class="kw">import</span> badger <span class="st">"github.com/dgraph-io/badger/v4"</span>
+
+<span class="kw">type</span> <span class="tp">BadgerStateStore</span> <span class="kw">struct</span> { db *badger.<span class="tp">DB</span> }
+
+<span class="kw">func</span> <span class="fn">NewBadgerStateStore</span>(dir <span class="tp">string</span>) (*<span class="tp">BadgerStateStore</span>, <span class="tp">error</span>) {
+    opts := badger.<span class="fn">DefaultOptions</span>(dir).
+        <span class="fn">WithLogger</span>(<span class="kw">nil</span>).          <span class="cm">// suppress noise</span>
+        <span class="fn">WithSyncWrites</span>(<span class="kw">false</span>).   <span class="cm">// WAL handles durability</span>
+        <span class="fn">WithCompression</span>(options.<span class="tp">Zstd</span>)
+    db, err := badger.<span class="fn">Open</span>(opts)
+    <span class="kw">if</span> err != <span class="kw">nil</span> { <span class="kw">return nil</span>, err }
+    <span class="kw">return</span> &<span class="tp">BadgerStateStore</span>{db: db}, <span class="kw">nil</span>
+}
+
+<span class="kw">func</span> (b *<span class="tp">BadgerStateStore</span>) <span class="fn">Set</span>(topic <span class="tp">string</span>, payload json.<span class="tp">RawMessage</span>) <span class="tp">error</span> {
+    <span class="kw">return</span> b.db.<span class="fn">Update</span>(<span class="kw">func</span>(txn *badger.<span class="tp">Txn</span>) <span class="tp">error</span> {
+        <span class="kw">return</span> txn.<span class="fn">Set</span>([]<span class="tp">byte</span>(topic), payload)
+    })
+}
+
+<span class="kw">func</span> (b *<span class="tp">BadgerStateStore</span>) <span class="fn">GetAll</span>() (map[<span class="tp">string</span>]json.<span class="tp">RawMessage</span>, <span class="tp">error</span>) {
+    result := <span class="kw">make</span>(map[<span class="tp">string</span>]json.<span class="tp">RawMessage</span>)
+    err := b.db.<span class="fn">View</span>(<span class="kw">func</span>(txn *badger.<span class="tp">Txn</span>) <span class="tp">error</span> {
+        opts := badger.<span class="fn">DefaultIteratorOptions</span>()
+        it := txn.<span class="fn">NewIterator</span>(opts)
+        <span class="kw">defer</span> it.<span class="fn">Close</span>()
+        <span class="kw">for</span> it.<span class="fn">Rewind</span>(); it.<span class="fn">Valid</span>(); it.<span class="fn">Next</span>() {
+            item := it.<span class="fn">Item</span>()
+            v, _ := item.<span class="fn">ValueCopy</span>(<span class="kw">nil</span>)
+            result[<span class="tp">string</span>(item.<span class="fn">Key</span>())] = v
+        }
+        <span class="kw">return nil</span>
+    })
+    <span class="kw">return</span> result, err
+}</pre>
+
+  <h3>FASTER — .NET (pure C#, recommended for .NET broker)</h3>
+<pre><span class="lang">C# — FASTER StateStore</span><span class="cm">// dotnet add package Microsoft.FASTER.Core
+// Pure C# — no native dependencies, NativeAOT compatible</span>
+
+<span class="kw">using</span> <span class="tp">FASTER.core</span>;
+
+<span class="kw">public sealed class</span> <span class="tp">FasterStateStore</span> : <span class="tp">IStateStore</span>
+{
+    <span class="kw">private readonly</span> <span class="tp">FasterKV</span>&lt;<span class="tp">SpanByte</span>, <span class="tp">SpanByte</span>&gt; _store;
+    <span class="kw">private readonly</span> <span class="tp">IDevice</span> _log;
+
+    <span class="kw">public</span> <span class="tp">FasterStateStore</span>(<span class="tp">string</span> dir)
+    {
+        _log = <span class="tp">Devices</span>.<span class="fn">CreateLogDevice</span>(<span class="tp">Path</span>.<span class="fn">Combine</span>(dir, <span class="st">"state.log"</span>));
+        _store = <span class="kw">new</span> <span class="tp">FasterKV</span>&lt;<span class="tp">SpanByte</span>, <span class="tp">SpanByte</span>&gt;(
+            <span class="nm">1L</span> &lt;&lt; <span class="nm">20</span>,  <span class="cm">// 1M hash buckets</span>
+            <span class="kw">new</span> <span class="tp">LogSettings</span> {
+                LogDevice      = _log,
+                MemorySizeBits = <span class="nm">25</span>,   <span class="cm">// 32MB in-memory tier</span>
+                PageSizeBits   = <span class="nm">14</span>,   <span class="cm">// 16KB pages</span>
+            }
+        );
+    }
+
+    <span class="kw">public</span> <span class="tp">ValueTask</span> <span class="fn">SetAsync</span>(<span class="tp">string</span> topic, <span class="tp">JsonElement</span> payload, <span class="tp">CancellationToken</span> ct)
+    {
+        <span class="kw">var</span> session = _store.<span class="fn">NewSession</span>&lt;<span class="tp">SpanByte</span>, <span class="tp">SpanByte</span>, <span class="tp">Empty</span>, <span class="tp">SimpleSimpleFunctions</span>&lt;<span class="tp">SpanByte</span>, <span class="tp">SpanByte</span>&gt;&gt;
+            (<span class="kw">new</span> <span class="tp">SimpleSimpleFunctions</span>&lt;<span class="tp">SpanByte</span>, <span class="tp">SpanByte</span>&gt;());
+        <span class="kw">try</span> {
+            <span class="kw">var</span> keyBytes   = <span class="tp">Encoding</span>.UTF8.<span class="fn">GetBytes</span>(topic);
+            <span class="kw">var</span> valueBytes = <span class="tp">JsonSerializer</span>.<span class="fn">SerializeToUtf8Bytes</span>(payload, <span class="tp">BrokerJsonContext</span>.Default.<span class="tp">JsonElement</span>);
+            <span class="kw">unsafe</span> {
+                <span class="kw">fixed</span> (<span class="tp">byte</span>* kp = keyBytes, vp = valueBytes) {
+                    <span class="kw">var</span> key = <span class="tp">SpanByte</span>.<span class="fn">FromPinnedPointer</span>(kp, keyBytes.Length);
+                    <span class="kw">var</span> val = <span class="tp">SpanByte</span>.<span class="fn">FromPinnedPointer</span>(vp, valueBytes.Length);
+                    session.<span class="fn">Upsert</span>(<span class="kw">ref</span> key, <span class="kw">ref</span> val);
+                }
+            }
+        } <span class="kw">finally</span> { session.<span class="fn">Dispose</span>(); }
+        <span class="kw">return</span> <span class="tp">ValueTask</span>.CompletedTask;
+    }
+}</pre>
+
+  <div class="callout">
+    <strong>Hybrid Design — Best of Both</strong>
+    The highest-performance design keeps the <strong>custom WAL for durability</strong> (sequential append is unbeatable) but replaces the sharded in-memory map with <strong>FASTER or BadgerDB as the KV tier</strong>. WAL → fsync → KV.Upsert(). On restart: load KV snapshot → replay WAL tail. This gives you crash safety from the WAL and efficient range queries + compression from the KV engine — without the LSM compaction interfering with the sequential write path.
+  </div>
+</section>
+
+<!-- ── 06 RECOMMENDATION ── -->
+<section id="recommendation">
+  <div class="sec-hd"><span class="sec-num">06</span><h2>Recommendation by Scenario</h2></div>
+
+  <div class="rec-grid">
+    <div class="rec-cell">
+      <div class="rec-scenario">Go · minimal deps · &lt;100k topics</div>
+      <div class="rec-pick">★ Custom WAL + Snapshots</div>
+      <div class="rec-why">Our design. Zero deps, purpose-built for this access pattern, single binary. No compaction overhead. WAL sequential append saturates disk write bandwidth. Sufficient for the majority of deployments.</div>
+    </div>
+    <div class="rec-cell">
+      <div class="rec-scenario">Go · no native deps · &gt;500k topics with compression</div>
+      <div class="rec-pick">BadgerDB</div>
+      <div class="rec-why">Pure Go, Zstd compression for large payloads, VLOG reduces write amplification vs plain LSM-tree. Replace the in-memory shard map with Badger — keep the WAL or disable it (Badger has its own WAL). Single binary maintained.</div>
+    </div>
+    <div class="rec-cell">
+      <div class="rec-scenario">Go · max write throughput · accept native dep</div>
+      <div class="rec-pick">RocksDB via grocksdb</div>
+      <div class="rec-why">Only if write throughput exceeds what the custom WAL can deliver and compression matters for storage cost. The C++ dependency breaks single-binary deploy and complicates cross-platform builds. Bring in only if benchmarks prove necessity.</div>
+    </div>
+    <div class="rec-cell">
+      <div class="rec-scenario">.NET · minimal deps · &lt;100k topics</div>
+      <div class="rec-pick">★ Custom WAL + Snapshots</div>
+      <div class="rec-why">Same rationale as Go. WalWriter + ShardedStateStore is purpose-built, NativeAOT-compatible, and zero NuGet. Ideal for the majority of deployments.</div>
+    </div>
+    <div class="rec-cell">
+      <div class="rec-scenario">.NET · high topic cardinality · need compression</div>
+      <div class="rec-pick">Microsoft FASTER</div>
+      <div class="rec-why">Pure C#, no native deps, NativeAOT-compatible. Hybrid log keeps hot topics in memory, spills to disk. The best .NET-native KV option with minimal write amplification. One NuGet package.</div>
+    </div>
+    <div class="rec-cell">
+      <div class="rec-scenario">Read-dominated · many subscribers reading same topics</div>
+      <div class="rec-pick">LMDB</div>
+      <div class="rec-why">MVCC + memory-mapped zero-copy reads give the highest concurrent read throughput of any embedded engine. If the broker serves far more reads than writes (rare state updates, many subscribers polling), LMDB's read performance justifies the native C dependency.</div>
+    </div>
+    <div class="rec-cell">
+      <div class="rec-scenario">Raft mode enabled (any language)</div>
+      <div class="rec-pick">PersistentState (DotNext) / etcd/raft's own storage</div>
+      <div class="rec-why">When Raft is enabled, the Raft log is the WAL and the snapshot mechanism replaces periodic dumps. Do not stack a separate KV engine on top of Raft storage — this creates double durability overhead with no benefit.</div>
+    </div>
+    <div class="rec-cell">
+      <div class="rec-scenario">Avoid in all scenarios</div>
+      <div class="rec-pick">SQLite for broker storage</div>
+      <div class="rec-why">SQLite is not designed for high-frequency KV updates from multiple concurrent goroutines/tasks. Write lock contention, B-tree page locking, and ACID overhead make it the worst performer for this exact workload despite being the most familiar option.</div>
+    </div>
+  </div>
+
+  <h3>Decision Tree</h3>
+
+<pre><span class="lang">Text — Decision Tree</span>Does your deployment need a single binary with zero native deps?
+├── Yes ──▶ Are you on Go or .NET?
+│           ├── Go  ──▶ Topics &lt; 500k?
+│           │           ├── Yes ──▶ ★ Custom WAL + Snapshots
+│           │           └── No  ──▶ BadgerDB (pure Go, compression)
+│           └── .NET ──▶ Topics &lt; 500k?
+│                       ├── Yes ──▶ ★ Custom WAL + Snapshots
+│                       └── No  ──▶ Microsoft FASTER (pure C#)
+│
+└── No  ──▶ Is read throughput the bottleneck (many subscribers, rare writes)?
+            ├── Yes ──▶ LMDB (zero-copy mmap reads, C dep acceptable)
+            └── No  ──▶ Is write throughput with compression the bottleneck?
+                        ├── Yes, Go  ──▶ RocksDB via grocksdb (C++ dep)
+                        ├── Yes, .NET ──▶ RocksDB via rocksdb-sharp (C++ dep)
+                        └── No  ──▶ Reconsider — custom WAL likely sufficient</pre>
+</section>
+
+</div>
+
+<footer>
+  <span>Storage Engine Comparison · Broker Workload Profile · Custom WAL vs RocksDB / LevelDB / LMDB / FASTER / SQLite / BadgerDB / Pebble</span>
+  <span>Write amplification · Access pattern analysis · Integration code · Go + .NET</span>
+</footer>
+
+</body>
+</html>

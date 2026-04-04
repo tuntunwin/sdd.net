@@ -1,0 +1,1235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>.NET Core Minimal State Broker — Design Plan</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Epilogue:wght@300;400;600;800;900&family=Newsreader:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:      #f2f4f8;
+  --surface: #ffffff;
+  --ink:     #0d1b2a;
+  --dim:     #7a8899;
+  --rule:    #dde2ea;
+  --rule2:   #c8d0dc;
+  --violet:  #512bd4;
+  --violet2: #7c5ce8;
+  --teal:    #0097a7;
+  --green:   #1b7a3e;
+  --red:     #c0392b;
+  --amber:   #b85c00;
+  --blue:    #1565c0;
+  --mono:    'JetBrains Mono', monospace;
+  --sans:    'Epilogue', sans-serif;
+  --serif:   'Newsreader', serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+/* ── HEADER ── */
+header {
+  background: var(--ink);
+  padding: 0;
+  position: relative;
+  overflow: hidden;
+}
+.header-band {
+  height: 5px;
+  background: linear-gradient(90deg, var(--violet) 0%, var(--teal) 50%, var(--violet2) 100%);
+}
+.header-inner {
+  padding: 3rem 3.5rem 2.5rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2rem;
+  align-items: start;
+  max-width: 1180px;
+  margin: 0 auto;
+  position: relative;
+}
+.header-inner::after {
+  content: '.NET';
+  position: absolute;
+  right: 3rem; top: 1.5rem;
+  font-family: var(--sans);
+  font-size: 9rem;
+  font-weight: 900;
+  color: rgba(255,255,255,.03);
+  letter-spacing: -.04em;
+  pointer-events: none;
+  line-height: 1;
+}
+.h-eyebrow {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--violet2);
+  margin-bottom: .7rem;
+}
+h1 {
+  font-family: var(--sans);
+  font-size: clamp(1.9rem, 4vw, 3rem);
+  font-weight: 900;
+  line-height: 1.08;
+  letter-spacing: -.02em;
+  color: #f0f4f8;
+}
+h1 em {
+  font-style: italic;
+  font-weight: 300;
+  color: #8090a8;
+}
+.h-sub {
+  margin-top: 1rem;
+  font-family: var(--serif);
+  font-size: .95rem;
+  color: #5a6878;
+  line-height: 1.8;
+  max-width: 560px;
+}
+.h-tags { margin-top: 1.2rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+.htag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border: 1px solid #2a3848;
+  color: #4a5a6a;
+}
+.htag.v { border-color: var(--violet); color: var(--violet2); }
+.htag.t { border-color: var(--teal);   color: var(--teal); }
+
+.h-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: #1a2a3a;
+  border: 1px solid #1a2a3a;
+  flex-shrink: 0;
+  align-self: start;
+  min-width: 200px;
+}
+.hs {
+  background: #0f1e2d;
+  padding: .9rem 1rem;
+  text-align: center;
+}
+.hs-val {
+  font-family: var(--mono);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--violet2);
+  display: block;
+}
+.hs-key {
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #3a4858;
+}
+
+/* ── NAV ── */
+nav {
+  background: #0f1822;
+  padding: 0 3.5rem;
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid #1a2a3a;
+}
+nav a {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: #3a5060;
+  text-decoration: none;
+  padding: .8rem 1.1rem;
+  border-right: 1px solid #1a2a3a;
+  white-space: nowrap;
+  transition: color .15s, background .15s;
+}
+nav a:first-child { border-left: 1px solid #1a2a3a; }
+nav a:hover { color: var(--violet2); background: rgba(81,43,212,.08); }
+
+/* ── LAYOUT ── */
+.page { max-width: 1180px; margin: 0 auto; padding: 0 3.5rem 6rem; }
+section { padding: 3.5rem 0; border-bottom: 1px solid var(--rule); }
+section:last-child { border-bottom: none; }
+
+.sec-hd { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 2rem; }
+.sec-num {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .15em;
+  color: var(--dim);
+  border: 1px solid var(--rule2);
+  padding: 2px 7px;
+}
+h2 {
+  font-family: var(--sans);
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: -.02em;
+}
+h3 {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--violet);
+  margin: 2.2rem 0 1rem;
+  padding-bottom: .4rem;
+  border-bottom: 1px solid var(--rule);
+}
+p { color: #3a4a5a; font-size: .91rem; line-height: 1.8; margin-bottom: .9rem; }
+p strong { color: var(--ink); }
+code { font-family: var(--mono); font-size: .82em; color: var(--violet); background: rgba(81,43,212,.07); padding: 1px 5px; border-radius: 2px; }
+
+/* ── CODE BLOCK ── */
+pre {
+  background: var(--ink);
+  color: #c8d8e8;
+  font-family: var(--mono);
+  font-size: .76rem;
+  line-height: 1.9;
+  padding: 1.6rem 2rem;
+  overflow-x: auto;
+  margin: 1rem 0 1.5rem;
+  border-left: 3px solid var(--violet);
+  position: relative;
+}
+pre .lang-tag {
+  position: absolute;
+  top: .5rem; right: .8rem;
+  font-size: 8px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #2a3848;
+}
+.kw  { color: #c792ea; }
+.tp  { color: #82aaff; }
+.fn  { color: #80cbc4; }
+.st  { color: #c3e88d; }
+.cm  { color: #2d4050; font-style: italic; }
+.nm  { color: #f78c6c; }
+.op  { color: #f07178; }
+.at  { color: #ffcb6b; }
+
+/* ── MAPPING TABLE ── */
+.map-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: .84rem;
+}
+.map-table thead tr { background: var(--ink); color: var(--bg); }
+.map-table th {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  padding: .65rem 1rem;
+  text-align: left;
+  font-weight: 400;
+  border-right: 1px solid #1a2a3a;
+}
+.map-table th.violet { background: #1e1040; color: var(--violet2); }
+.map-table td {
+  padding: .65rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+  vertical-align: middle;
+}
+.map-table td:first-child { font-family: var(--mono); color: #8090a0; font-size: .75rem; }
+.map-table td.go { font-family: var(--mono); font-size: .77rem; color: var(--teal); }
+.map-table td.cs { font-family: var(--mono); font-size: .77rem; color: var(--violet2); }
+.map-table td.note { font-size: .78rem; color: var(--dim); }
+.map-table tr:hover td { background: rgba(81,43,212,.03); }
+
+/* ── COMPONENT GRID ── */
+.comp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin: 1.5rem 0;
+}
+.comp-cell {
+  background: var(--surface);
+  padding: 1.3rem 1.5rem;
+  position: relative;
+}
+.comp-cell.hot { border-left: 3px solid var(--violet); }
+.cc-name { font-family: var(--mono); font-size: .8rem; font-weight: 600; margin-bottom: .4rem; }
+.comp-cell.hot .cc-name { color: var(--violet); }
+.cc-primitive {
+  font-family: var(--mono);
+  font-size: .7rem;
+  color: var(--teal);
+  margin-bottom: .5rem;
+}
+.cc-desc { font-size: .82rem; color: #5a6878; line-height: 1.65; }
+.cc-idx {
+  position: absolute;
+  top: .7rem; right: .9rem;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  color: var(--rule2);
+}
+
+/* ── WRITE PATH ── */
+.wp { border: 1px solid var(--rule); margin: 1.5rem 0; }
+.wp-step {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  border-bottom: 1px solid var(--rule);
+}
+.wp-step:last-child { border-bottom: none; }
+.wp-n {
+  font-family: var(--mono);
+  font-size: .68rem;
+  color: var(--dim);
+  display: flex; align-items: center; justify-content: center;
+  border-right: 1px solid var(--rule);
+  background: var(--bg);
+}
+.wp-b { padding: .9rem 1.2rem; }
+.wp-title { font-family: var(--mono); font-size: .78rem; font-weight: 600; color: var(--ink); margin-bottom: .2rem; }
+.wp-note  { font-size: .8rem; color: #6a7888; }
+.wp-badge { padding: .9rem 1.1rem; display: flex; align-items: center; gap: .4rem; }
+.pill {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+}
+.pill.q0   { background: rgba(0,151,167,.1);   color: var(--teal); }
+.pill.q1   { background: rgba(81,43,212,.1);   color: var(--violet2); }
+.pill.both { background: rgba(27,122,62,.1);   color: var(--green); }
+.pill.warn { background: rgba(192,57,43,.1);   color: var(--red); }
+
+.wp-fork {
+  display: grid;
+  grid-template-columns: 44px 1fr 1fr;
+  background: var(--rule);
+  gap: 1px;
+  border-bottom: 1px solid var(--rule);
+}
+.wff-num {
+  background: var(--bg);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 1rem;
+  font-family: var(--mono);
+  font-size: .68rem;
+  color: var(--dim);
+}
+.wff-side { background: var(--surface); padding: .9rem 1.2rem; }
+.wff-label {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  margin-bottom: .6rem;
+  padding-bottom: .3rem;
+  border-bottom: 1px solid var(--rule);
+}
+.wff-label.q0 { color: var(--teal); }
+.wff-label.q1 { color: var(--violet); }
+.wff-item { font-size: .8rem; color: #5a6878; display: flex; gap: .5rem; margin-bottom: .3rem; line-height: 1.5; }
+.wff-item::before { content: '→'; color: var(--rule2); flex-shrink: 0; }
+
+/* ── CONCURRENCY GRID ── */
+.conc-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin: 1.5rem 0;
+}
+@media (max-width: 780px) { .conc-grid { grid-template-columns: 1fr; } }
+.cc-cell { background: var(--surface); padding: 1.2rem 1.4rem; }
+.cc-cell-title { font-family: var(--mono); font-size: .77rem; font-weight: 600; margin-bottom: .5rem; }
+.cc-cell:nth-child(1) .cc-cell-title { color: var(--violet); }
+.cc-cell:nth-child(2) .cc-cell-title { color: var(--teal); }
+.cc-cell:nth-child(3) .cc-cell-title { color: var(--green); }
+.cc-list { list-style: none; }
+.cc-list li { font-size: .81rem; color: #5a6878; line-height: 1.65; display: flex; gap: .5rem; margin-bottom: .25rem; }
+.cc-list li::before { content: '▸'; color: var(--rule2); flex-shrink: 0; }
+
+/* ── STORAGE LAYERS ── */
+.sl { border: 1px solid var(--rule); margin: 1.5rem 0; }
+.sl-row { display: grid; grid-template-columns: 160px 1fr; border-bottom: 1px solid var(--rule); }
+.sl-row:last-child { border-bottom: none; }
+.sl-name {
+  font-family: var(--mono);
+  font-size: .74rem;
+  color: var(--violet);
+  background: var(--bg);
+  border-right: 1px solid var(--rule);
+  padding: 1rem 1.1rem;
+  display: flex; align-items: center;
+}
+.sl-body { padding: .95rem 1.3rem; }
+.sl-title { font-family: var(--mono); font-size: .77rem; font-weight: 600; color: var(--ink); margin-bottom: .25rem; }
+.sl-desc { font-size: .81rem; color: #5a6878; line-height: 1.65; }
+.sl-api  { font-family: var(--mono); font-size: .7rem; color: var(--teal); margin-top: .3rem; }
+
+/* ── BUILD TABLE ── */
+.build-table { width: 100%; border-collapse: collapse; margin: 1.2rem 0; font-size: .82rem; }
+.build-table thead tr { background: #1a2a3a; }
+.build-table th {
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  padding: .6rem 1rem;
+  text-align: left;
+  font-weight: 400;
+  color: #4a6070;
+  border-right: 1px solid #0f1822;
+}
+.build-table td { padding: .65rem 1rem; border-bottom: 1px solid var(--rule); border-right: 1px solid var(--rule); color: #4a5868; vertical-align: top; }
+.build-table td:first-child { font-family: var(--mono); font-size: .75rem; color: var(--violet2); }
+.build-table td:nth-child(2) { font-family: var(--mono); font-size: .73rem; color: var(--teal); }
+.build-table tr:hover td { background: rgba(81,43,212,.03); }
+
+/* ── CALLOUT ── */
+.callout {
+  border-left: 3px solid var(--violet);
+  background: rgba(81,43,212,.05);
+  padding: 1rem 1.4rem;
+  margin: 1.2rem 0;
+  font-size: .88rem;
+  color: #3a4a5a;
+  line-height: 1.75;
+}
+.callout strong { font-family: var(--mono); font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; color: var(--violet); display: block; margin-bottom: .3rem; }
+.callout.g { border-color: var(--green); background: rgba(27,122,62,.05); }
+.callout.g strong { color: var(--green); }
+.callout.t { border-color: var(--teal); background: rgba(0,151,167,.05); }
+.callout.t strong { color: var(--teal); }
+.callout.r { border-color: var(--red); background: rgba(192,57,43,.05); }
+.callout.r strong { color: var(--red); }
+
+/* ── DIFF TABLE (Go vs .NET) ── */
+.diff-table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: .83rem; }
+.diff-table thead tr { background: var(--ink); }
+.diff-table th {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  padding: .65rem 1rem;
+  text-align: left;
+  font-weight: 400;
+  color: #3a5060;
+  border-right: 1px solid #1a2a3a;
+}
+.diff-table th.go-col { color: var(--teal); }
+.diff-table th.cs-col { color: var(--violet2); }
+.diff-table td { padding: .7rem 1rem; border-bottom: 1px solid var(--rule); border-right: 1px solid var(--rule); vertical-align: top; }
+.diff-table td:first-child { font-family: var(--mono); font-size: .73rem; color: var(--dim); }
+.diff-table td.go-col { font-family: var(--mono); font-size: .74rem; color: var(--teal); background: rgba(0,151,167,.02); }
+.diff-table td.cs-col { font-family: var(--mono); font-size: .74rem; color: var(--violet2); background: rgba(81,43,212,.02); }
+.diff-table td.note-col { font-size: .78rem; color: var(--dim); }
+.diff-table tr:hover td { filter: brightness(.97); }
+
+/* ── CONFIG ── */
+.cfg-table { width: 100%; border-collapse: collapse; margin: 1.2rem 0; font-size: .82rem; }
+.cfg-table thead tr { background: var(--ink); }
+.cfg-table th { font-family: var(--mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; padding: .55rem .9rem; text-align: left; font-weight: 400; color: #3a5060; }
+.cfg-table td { padding: .6rem .9rem; border-bottom: 1px solid var(--rule); color: #4a5868; font-size: .8rem; }
+.cfg-table td:first-child { font-family: var(--mono); font-size: .75rem; color: var(--violet2); }
+.cfg-table td:nth-child(2) { font-family: var(--mono); font-size: .73rem; color: var(--teal); }
+.cfg-table tr:hover td { background: rgba(81,43,212,.03); }
+
+footer {
+  border-top: 2px solid var(--ink);
+  padding: 1.5rem 3.5rem;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .07em;
+  color: var(--dim);
+}
+
+@media (max-width: 640px) {
+  header .header-inner, .page, nav, footer { padding-left: 1.2rem; padding-right: 1.2rem; }
+  h1 { font-size: 1.6rem; }
+  .header-inner { grid-template-columns: 1fr; }
+  .wp-fork { grid-template-columns: 44px 1fr; }
+  .wff-side:last-child { display: none; }
+  .sl-row { grid-template-columns: 1fr; }
+  .sl-name { border-right: none; border-bottom: 1px solid var(--rule); }
+}
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<div class="header-band"></div>
+<header>
+  <div class="header-inner">
+    <div>
+      <p class="h-eyebrow">Architecture Spec · .NET 8+ · C# 12 · Cross-Platform</p>
+      <h1>.NET Core<br>Minimal State Broker<br><em>Go parity, zero extra deps</em></h1>
+      <p class="h-sub">The same QoS 0/1, sharded concurrency, WAL + snapshot, and optional Raft design — rewritten using only .NET 8 built-in APIs. No NuGet packages required for the core.</p>
+      <div class="h-tags">
+        <span class="htag v">System.Threading.Channels</span>
+        <span class="htag v">ReaderWriterLockSlim</span>
+        <span class="htag t">System.IO.Pipelines</span>
+        <span class="htag t">System.Net.WebSockets</span>
+        <span class="htag">NativeAOT</span>
+        <span class="htag">PublishSingleFile</span>
+        <span class="htag">System.Text.Json</span>
+        <span class="htag">Zero NuGet Core</span>
+      </div>
+    </div>
+    <div class="h-stats">
+      <div class="hs"><span class="hs-val">64</span><span class="hs-key">RWLS Shards</span></div>
+      <div class="hs"><span class="hs-val">2ms</span><span class="hs-key">fsync Window</span></div>
+      <div class="hs"><span class="hs-val">0</span><span class="hs-key">NuGet Core</span></div>
+      <div class="hs"><span class="hs-val">AOT</span><span class="hs-key">Publish Mode</span></div>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <a href="#mapping">Go → .NET Map</a>
+  <a href="#components">Components</a>
+  <a href="#write-path">Write Path</a>
+  <a href="#concurrency">Concurrency</a>
+  <a href="#storage">Storage</a>
+  <a href="#build">Build &amp; Publish</a>
+  <a href="#contracts">Interfaces</a>
+  <a href="#config">Config</a>
+</nav>
+
+<div class="page">
+
+<!-- ── 01 MAPPING ── -->
+<section id="mapping">
+  <div class="sec-hd"><span class="sec-num">01</span><h2>Go → .NET Primitive Mapping</h2></div>
+
+  <p>Every Go concurrency primitive has a direct .NET 8 equivalent — all in the BCL, zero NuGet. The goal is structural parity: same invariants, same data flows, different syntax and runtime model.</p>
+
+  <table class="map-table">
+    <thead>
+      <tr>
+        <th>Concept</th>
+        <th>Go Primitive</th>
+        <th class="violet">.NET 8 Equivalent</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Lightweight concurrency</td>
+        <td class="go">goroutine</td>
+        <td class="cs">Task + async/await</td>
+        <td class="note">ThreadPool-backed. Each conn gets a <code>Task.Run</code> read loop and a dedicated write loop.</td>
+      </tr>
+      <tr>
+        <td>Typed message channel</td>
+        <td class="go">chan T</td>
+        <td class="cs">Channel&lt;T&gt;</td>
+        <td class="note"><code>System.Threading.Channels</code>. Bounded with <code>DropOldest</code> for QoS 0. BoundedChannelOptions replaces Go's select default.</td>
+      </tr>
+      <tr>
+        <td>Read-many / write-exclusive lock</td>
+        <td class="go">sync.RWMutex</td>
+        <td class="cs">ReaderWriterLockSlim</td>
+        <td class="note">EnterReadLock / EnterWriteLock. Not async-safe — wrap async boundaries with SemaphoreSlim if needed.</td>
+      </tr>
+      <tr>
+        <td>Simple mutex</td>
+        <td class="go">sync.Mutex</td>
+        <td class="cs">lock / SemaphoreSlim(1,1)</td>
+        <td class="note">Use <code>lock</code> for sync code. <code>SemaphoreSlim(1,1)</code> for async-safe critical sections with <code>WaitAsync()</code>.</td>
+      </tr>
+      <tr>
+        <td>Concurrent key-value map</td>
+        <td class="go">sync.Map / map+mutex</td>
+        <td class="cs">ConcurrentDictionary&lt;K,V&gt;</td>
+        <td class="note">Or sharded <code>Dictionary</code> + <code>ReaderWriterLockSlim[]</code> for the StateStore hot path.</td>
+      </tr>
+      <tr>
+        <td>Cancellation / context passing</td>
+        <td class="go">context.Context</td>
+        <td class="cs">CancellationToken</td>
+        <td class="note">Propagate via method parameters. <code>CancellationTokenSource.CreateLinkedTokenSource</code> for hierarchy.</td>
+      </tr>
+      <tr>
+        <td>Condition variable</td>
+        <td class="go">sync.Cond</td>
+        <td class="cs">SemaphoreSlim + Release</td>
+        <td class="note">Writers call <code>WaitAsync()</code>; flush loop calls <code>Release(N)</code> after fsync. More explicit than Cond.Broadcast.</td>
+      </tr>
+      <tr>
+        <td>Periodic background timer</td>
+        <td class="go">time.NewTicker</td>
+        <td class="cs">PeriodicTimer</td>
+        <td class="note">.NET 6+ <code>PeriodicTimer</code>. Single-fire safe: <code>await timer.WaitForNextTickAsync(ct)</code>. No drift accumulation.</td>
+      </tr>
+      <tr>
+        <td>Zero-copy network reads</td>
+        <td class="go">bufio.Reader</td>
+        <td class="cs">System.IO.Pipelines.PipeReader</td>
+        <td class="note">True zero-copy. Exposes <code>ReadAsync → ReadResult → SequenceReader&lt;byte&gt;</code>. Built into .NET, no NuGet.</td>
+      </tr>
+      <tr>
+        <td>JSON encode/decode</td>
+        <td class="go">encoding/json</td>
+        <td class="cs">System.Text.Json</td>
+        <td class="note">Use <code>JsonSerializerContext</code> + source generators for AOT compatibility. No reflection at runtime.</td>
+      </tr>
+      <tr>
+        <td>File append + sync</td>
+        <td class="go">os.File + Sync()</td>
+        <td class="cs">FileStream(FileOptions.WriteThrough)</td>
+        <td class="note">Or <code>RandomAccess.WriteAsync</code> + <code>fileStream.Flush(flushToDisk: true)</code>. Equivalent to fsync.</td>
+      </tr>
+      <tr>
+        <td>HTTP + WebSocket upgrade</td>
+        <td class="go">net/http + nhooyr.io/websocket</td>
+        <td class="cs">HttpListener + AcceptWebSocketAsync</td>
+        <td class="note">Zero NuGet. <code>HttpListener</code> is BCL. <code>AcceptWebSocketAsync(null)</code> handles the HTTP→WS upgrade.</td>
+      </tr>
+      <tr>
+        <td>Unique ID generation</td>
+        <td class="go">github.com/oklog/ulid</td>
+        <td class="cs">Guid.NewGuid() / UInt128</td>
+        <td class="note"><code>Guid.NewGuid().ToString("N")</code> for msg_id. Or implement ULID in ~20 lines using <code>System.Security.Cryptography</code>.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout t">
+    <strong>Key Difference: Async Permeation</strong>
+    Unlike Go where goroutines are cheap enough to use synchronously, .NET's async model permeates the entire I/O stack. The rule: any method that touches network, disk, or a <code>Channel</code> must be <code>async Task</code>. The <code>ReaderWriterLockSlim</code> used for shards is <em>synchronous only</em> — hold it for the minimum time, never across an <code>await</code>. For async-safe mutual exclusion, use <code>SemaphoreSlim(1,1)</code> instead.
+  </div>
+</section>
+
+<!-- ── 02 COMPONENTS ── -->
+<section id="components">
+  <div class="sec-hd"><span class="sec-num">02</span><h2>Component Map</h2></div>
+
+  <p>Seven components, identical structure to the Go design. Each maps directly to a .NET BCL type as its synchronization primitive. Hot path components are highlighted.</p>
+
+  <div class="comp-grid">
+    <div class="comp-cell hot">
+      <span class="cc-idx">C1</span>
+      <div class="cc-name">Transport</div>
+      <div class="cc-primitive">HttpListener + System.Net.WebSockets</div>
+      <div class="cc-desc">Accepts WebSocket upgrades. Each connection spins two Tasks: a PipeReader read loop and a Channel-drained write loop. Zero NuGet — BCL only.</div>
+    </div>
+    <div class="comp-cell hot">
+      <span class="cc-idx">C2</span>
+      <div class="cc-name">Message Router</div>
+      <div class="cc-primitive">ReaderWriterLockSlim + trie</div>
+      <div class="cc-desc">Topic trie protected by RWLS. Read lock for Match(); write lock for Subscribe/Unsubscribe. Fan-out posts frames to per-session <code>Channel&lt;Frame&gt;</code>.</div>
+    </div>
+    <div class="comp-cell hot">
+      <span class="cc-idx">C3</span>
+      <div class="cc-name">Sharded StateStore</div>
+      <div class="cc-primitive">ReaderWriterLockSlim[64]</div>
+      <div class="cc-desc">64 shards keyed by <code>topic.GetHashCode() &amp; 63</code>. Each shard is a <code>Dictionary&lt;string, JsonElement&gt;</code> guarded by its own RWLS. WAL write before memory update.</div>
+    </div>
+    <div class="comp-cell">
+      <span class="cc-idx">C4</span>
+      <div class="cc-name">QoS Engine</div>
+      <div class="cc-primitive">ConcurrentDictionary + SemaphoreSlim</div>
+      <div class="cc-desc">Per-clientId outbox (<code>List&lt;PendingFrame&gt;</code>) guarded by <code>SemaphoreSlim(1,1)</code>. Retry uses <code>Task.Delay</code> with exponential backoff. ACK removes atomically.</div>
+    </div>
+    <div class="comp-cell">
+      <span class="cc-idx">C5</span>
+      <div class="cc-name">Session Manager</div>
+      <div class="cc-primitive">ConcurrentDictionary + Channel&lt;Frame&gt;</div>
+      <div class="cc-desc">Maps clientId → Session. Each Session holds a <code>Channel&lt;Frame&gt;(256, DropOldest)</code>. Reconnect resumes pending QoS 1 outbox from QoS Engine.</div>
+    </div>
+    <div class="comp-cell">
+      <span class="cc-idx">C6</span>
+      <div class="cc-name">Storage Engine</div>
+      <div class="cc-primitive">FileStream + PeriodicTimer + SemaphoreSlim</div>
+      <div class="cc-desc">WAL append to FileStream. PeriodicTimer calls <code>Flush(flushToDisk:true)</code> every 2ms. SemaphoreSlim array acts as per-seq waiter — writers block until their seq is flushed.</div>
+    </div>
+    <div class="comp-cell">
+      <span class="cc-idx">C7</span>
+      <div class="cc-name">Consensus Layer</div>
+      <div class="cc-primitive">IConsensusLayer interface</div>
+      <div class="cc-desc">Default: <code>NoopConsensus</code> (passthrough, zero overhead). Optional: DotNext.Raft (pure .NET Raft implementation, single NuGet). Toggle via appsettings.json.</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>Project File — Truly Minimal</strong>
+    The core broker requires no NuGet packages. The <code>.csproj</code> references only the .NET 8 SDK. Optional Raft adds one package.
+  </div>
+
+<pre><span class="lang-tag">XML / .csproj</span><span class="op">&lt;</span><span class="tp">Project</span> <span class="at">Sdk</span>=<span class="st">"Microsoft.NET.Sdk"</span><span class="op">&gt;</span>
+  <span class="op">&lt;</span><span class="tp">PropertyGroup</span><span class="op">&gt;</span>
+    <span class="op">&lt;</span><span class="tp">OutputType</span><span class="op">&gt;</span>Exe<span class="op">&lt;/</span><span class="tp">OutputType</span><span class="op">&gt;</span>
+    <span class="op">&lt;</span><span class="tp">TargetFramework</span><span class="op">&gt;</span>net8.0<span class="op">&lt;/</span><span class="tp">TargetFramework</span><span class="op">&gt;</span>
+    <span class="op">&lt;</span><span class="tp">Nullable</span><span class="op">&gt;</span>enable<span class="op">&lt;/</span><span class="tp">Nullable</span><span class="op">&gt;</span>
+    <span class="op">&lt;</span><span class="tp">AllowUnsafeBlocks</span><span class="op">&gt;</span>true<span class="op">&lt;/</span><span class="tp">AllowUnsafeBlocks</span><span class="op">&gt;</span>  <span class="cm">&lt;!-- for Span&lt;T&gt; WAL operations --&gt;</span>
+    <span class="op">&lt;</span><span class="tp">PublishAot</span><span class="op">&gt;</span>true<span class="op">&lt;/</span><span class="tp">PublishAot</span><span class="op">&gt;</span>           <span class="cm">&lt;!-- NativeAOT for Go-like binary --&gt;</span>
+    <span class="op">&lt;</span><span class="tp">InvariantGlobalization</span><span class="op">&gt;</span>true<span class="op">&lt;/</span><span class="tp">InvariantGlobalization</span><span class="op">&gt;</span>
+  <span class="op">&lt;/</span><span class="tp">PropertyGroup</span><span class="op">&gt;</span>
+
+  <span class="cm">&lt;!-- ZERO NuGet packages for core. Raft only if cluster.mode = raft --&gt;</span>
+  <span class="op">&lt;</span><span class="tp">ItemGroup</span> <span class="at">Condition</span>=<span class="st">"'$(EnableRaft)' == 'true'"</span><span class="op">&gt;</span>
+    <span class="op">&lt;</span><span class="tp">PackageReference</span> <span class="at">Include</span>=<span class="st">"DotNext.Net.Cluster"</span> <span class="at">Version</span>=<span class="st">"5.*"</span> <span class="op">/&gt;</span>
+  <span class="op">&lt;/</span><span class="tp">ItemGroup</span><span class="op">&gt;</span>
+<span class="op">&lt;/</span><span class="tp">Project</span><span class="op">&gt;</span></pre>
+</section>
+
+<!-- ── 03 WRITE PATH ── -->
+<section id="write-path">
+  <div class="sec-hd"><span class="sec-num">03</span><h2>Write Path — Async QoS 0 / QoS 1</h2></div>
+
+  <p>The write path is fully <code>async</code>. The critical invariant — WAL before memory — is enforced in <code>StateStore.SetAsync()</code>. <code>await</code> at the WAL fsync boundary is the equivalent of Go's <code>WaitFlushed(seq)</code>.</p>
+
+  <div class="wp">
+    <div class="wp-step">
+      <div class="wp-n">1</div>
+      <div class="wp-b">
+        <div class="wp-title">PipeReader.ReadAsync() — decode NDJSON frame</div>
+        <div class="wp-note"><code>System.IO.Pipelines</code> gives zero-copy reads. <code>Utf8JsonReader</code> parses directly from the <code>ReadOnlySequence&lt;byte&gt;</code> buffer — no intermediate string allocation.</div>
+      </div>
+      <div class="wp-badge"><span class="pill both">QoS 0 + 1</span></div>
+    </div>
+    <div class="wp-step">
+      <div class="wp-n">2</div>
+      <div class="wp-b">
+        <div class="wp-title">Router.MatchAsync(topic) — trie fan-out</div>
+        <div class="wp-note">Enter read lock on trie RWLS. Resolve <code>IReadOnlyList&lt;string&gt; clientIds</code>. Exit lock immediately. Fan-out happens lock-free via Channel TryWrite.</div>
+      </div>
+      <div class="wp-badge"><span class="pill both">QoS 0 + 1</span></div>
+    </div>
+    <div class="wp-step">
+      <div class="wp-n">3</div>
+      <div class="wp-b">
+        <div class="wp-title">StateStore.SetAsync() if retain:true</div>
+        <div class="wp-note">WAL.AppendAsync() → seq. <code>await WAL.WaitFlushedAsync(seq)</code> — blocks until PeriodicTimer has called <code>Flush(flushToDisk:true)</code> covering this seq. Only then updates shard memory.</div>
+      </div>
+      <div class="wp-badge"><span class="pill q1">retain flag</span></div>
+    </div>
+
+    <div class="wp-fork">
+      <div class="wff-num">4</div>
+      <div class="wff-side">
+        <div class="wff-label q0">QoS 0 — Fire &amp; Forget</div>
+        <div class="wff-item"><code>session.SendChannel.Writer.TryWrite(frame)</code></div>
+        <div class="wff-item">Non-blocking. <code>BoundedChannelFullMode.DropOldest</code> handles backpressure silently</div>
+        <div class="wff-item">No outbox entry. Returns <code>ValueTask.CompletedTask</code> immediately</div>
+        <div class="wff-item">Offline subscriber → frame dropped, no retry</div>
+      </div>
+      <div class="wff-side">
+        <div class="wff-label q1">QoS 1 — At-Least-Once</div>
+        <div class="wff-item"><code>await qosEngine.EnqueueAsync(clientId, frame)</code></div>
+        <div class="wff-item"><code>session.SendChannel.Writer.TryWrite(frame)</code> (optimistic first send)</div>
+        <div class="wff-item">Start <code>Task.Run(() => RetryLoopAsync(clientId, frame, ct))</code></div>
+        <div class="wff-item">RetryLoop: <code>await Task.Delay(backoff, ct)</code> — check outbox — resend</div>
+        <div class="wff-item">ACK frame received → <code>qosEngine.Ack(clientId, msgId)</code></div>
+        <div class="wff-item">Reconnect → <code>qosEngine.GetPending(clientId)</code> replay</div>
+      </div>
+    </div>
+
+    <div class="wp-step">
+      <div class="wp-n">5</div>
+      <div class="wp-b">
+        <div class="wp-title">Write loop drains Channel → WebSocket.SendAsync()</div>
+        <div class="wp-note">Dedicated <code>await foreach (var frame in session.SendChannel.Reader.ReadAllAsync(ct))</code> loop per session. Serializes writes to the WebSocket without any additional lock.</div>
+      </div>
+      <div class="wp-badge"><span class="pill both">QoS 0 + 1</span></div>
+    </div>
+    <div class="wp-step">
+      <div class="wp-n">6</div>
+      <div class="wp-b">
+        <div class="wp-title">New subscriber → retained state push at QoS 1</div>
+        <div class="wp-note">On SUBSCRIBE, <code>StateStore.GetRetained(topic)</code> reads all matching retained payloads (read lock, O(matched topics)). Each delivered as DELIVER frame via QoS 1 outbox path.</div>
+      </div>
+      <div class="wp-badge"><span class="pill q1">QoS 1</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 04 CONCURRENCY ── -->
+<section id="concurrency">
+  <div class="sec-hd"><span class="sec-num">04</span><h2>Concurrency Model</h2></div>
+
+  <p>Three domains, each with the minimum locking required. The rule: <strong>never hold a <code>ReaderWriterLockSlim</code> across an <code>await</code></strong>. Acquire, read/write, release, then await.</p>
+
+  <div class="conc-grid">
+    <div class="cc-cell">
+      <div class="cc-cell-title">StateStore — RWLS[64]</div>
+      <ul class="cc-list">
+        <li>64 shards, each <code>ReaderWriterLockSlim(LockRecursionPolicy.NoRecursion)</code></li>
+        <li>Shard index: <code>HashCode.Combine(topic) &amp; 63</code> — avoids string hashing overhead</li>
+        <li>Read: <code>EnterReadLock / ExitReadLock</code> — many concurrent readers</li>
+        <li>Write: <code>EnterWriteLock / ExitWriteLock</code> — exclusive, milliseconds max</li>
+        <li>Lock held only for dictionary operation, never across I/O</li>
+      </ul>
+    </div>
+    <div class="cc-cell">
+      <div class="cc-cell-title">QoS Outbox — SemaphoreSlim per client</div>
+      <ul class="cc-list">
+        <li><code>SemaphoreSlim(1,1)</code> per clientId outbox (async-safe mutex)</li>
+        <li><code>await outboxLock.WaitAsync(ct)</code> before Enqueue/Ack/GetPending</li>
+        <li><code>outboxLock.Release()</code> in finally block — guaranteed release</li>
+        <li>Retry loop holds no lock during <code>Task.Delay</code> — fully non-blocking</li>
+        <li>Registry of outboxes: <code>ConcurrentDictionary&lt;string, OutboxEntry&gt;</code></li>
+      </ul>
+    </div>
+    <div class="cc-cell">
+      <div class="cc-cell-title">Sessions — Channel&lt;Frame&gt; per conn</div>
+      <ul class="cc-list">
+        <li><code>Channel.CreateBounded&lt;Frame&gt;(new BoundedChannelOptions(256) { FullMode = DropOldest })</code></li>
+        <li>Single reader (write loop task) — no lock needed on read side</li>
+        <li><code>TryWrite</code> is lock-free via interlocked operations internally</li>
+        <li>Session registry: <code>ConcurrentDictionary&lt;string, Session&gt;</code></li>
+        <li>Channel.Writer.Complete() signals write loop to exit cleanly</li>
+      </ul>
+    </div>
+  </div>
+
+<pre><span class="lang-tag">C# — Sharded StateStore</span><span class="kw">internal sealed class</span> <span class="tp">Shard</span>
+{
+    <span class="kw">public readonly</span> <span class="tp">ReaderWriterLockSlim</span> Lock = <span class="kw">new</span>(<span class="tp">LockRecursionPolicy</span>.NoRecursion);
+    <span class="kw">public readonly</span> <span class="tp">Dictionary</span>&lt;<span class="tp">string</span>, <span class="tp">JsonElement</span>&gt; Data = <span class="kw">new</span>();
+}
+
+<span class="kw">public sealed class</span> <span class="tp">StateStore</span>
+{
+    <span class="kw">private const int</span> <span class="nm">NumShards</span> = <span class="nm">64</span>;
+    <span class="kw">private readonly</span> <span class="tp">Shard</span>[] _shards = <span class="tp">Enumerable</span>.<span class="fn">Range</span>(<span class="nm">0</span>, <span class="nm">NumShards</span>)
+        .<span class="fn">Select</span>(_ => <span class="kw">new</span> <span class="tp">Shard</span>()).<span class="fn">ToArray</span>();
+    <span class="kw">private readonly</span> <span class="tp">IWalWriter</span> _wal;
+
+    <span class="kw">private</span> <span class="tp">Shard</span> <span class="fn">Pick</span>(<span class="tp">string</span> topic) =>
+        _shards[(<span class="tp">uint</span>)<span class="tp">HashCode</span>.<span class="fn">Combine</span>(topic) % <span class="nm">NumShards</span>];
+
+    <span class="kw">public async</span> <span class="tp">ValueTask</span> <span class="fn">SetAsync</span>(<span class="tp">string</span> topic, <span class="tp">JsonElement</span> payload, <span class="tp">CancellationToken</span> ct)
+    {
+        <span class="cm">// 1. WAL first — durable before memory</span>
+        <span class="kw">var</span> seq = <span class="kw">await</span> _wal.<span class="fn">AppendAsync</span>(topic, payload, ct);
+        <span class="kw">await</span> _wal.<span class="fn">WaitFlushedAsync</span>(seq, ct);  <span class="cm">// blocks until 2ms fsync window</span>
+
+        <span class="cm">// 2. Memory update — lock for minimum time, never across await</span>
+        <span class="kw">var</span> shard = <span class="fn">Pick</span>(topic);
+        shard.Lock.<span class="fn">EnterWriteLock</span>();
+        <span class="kw">try</span>   { shard.Data[topic] = payload; }
+        <span class="kw">finally</span> { shard.Lock.<span class="fn">ExitWriteLock</span>(); }
+    }
+
+    <span class="kw">public</span> <span class="tp">JsonElement</span>? <span class="fn">Get</span>(<span class="tp">string</span> topic)
+    {
+        <span class="kw">var</span> shard = <span class="fn">Pick</span>(topic);
+        shard.Lock.<span class="fn">EnterReadLock</span>();
+        <span class="kw">try</span>   { <span class="kw">return</span> shard.Data.<span class="fn">TryGetValue</span>(topic, <span class="kw">out var</span> v) ? v : <span class="kw">null</span>; }
+        <span class="kw">finally</span> { shard.Lock.<span class="fn">ExitReadLock</span>(); }
+    }
+}
+
+<span class="cm">// Session write channel — lock-free send path</span>
+<span class="kw">public sealed record</span> <span class="tp">Session</span>(
+    <span class="tp">string</span> ClientId,
+    <span class="tp">Channel</span>&lt;<span class="tp">Frame</span>&gt; SendChannel,
+    <span class="tp">CancellationTokenSource</span> Cts
+) {
+    <span class="kw">public bool</span> <span class="fn">TrySend</span>(<span class="tp">Frame</span> f) => SendChannel.Writer.<span class="fn">TryWrite</span>(f);
+}
+
+<span class="kw">public static</span> <span class="tp">Session</span> <span class="fn">CreateSession</span>(<span class="tp">string</span> clientId) => <span class="kw">new</span>(
+    clientId,
+    <span class="tp">Channel</span>.<span class="fn">CreateBounded</span>&lt;<span class="tp">Frame</span>&gt;(<span class="kw">new</span> <span class="tp">BoundedChannelOptions</span>(<span class="nm">256</span>) {
+        FullMode = <span class="tp">BoundedChannelFullMode</span>.DropOldest,  <span class="cm">// QoS 0: drop on overflow</span>
+        SingleReader = <span class="kw">true</span>, SingleWriter = <span class="kw">false</span>
+    }),
+    <span class="kw">new</span> <span class="tp">CancellationTokenSource</span>()
+);</pre>
+</section>
+
+<!-- ── 05 STORAGE ── -->
+<section id="storage">
+  <div class="sec-hd"><span class="sec-num">05</span><h2>Storage Engine</h2></div>
+
+  <p>Five layers, same architecture as Go. The key .NET-specific detail: <code>FileStream</code> must be opened with <code>FileOptions.Asynchronous</code> for non-blocking writes, and <code>Flush(flushToDisk: true)</code> is the exact equivalent of Go's <code>f.Sync()</code>.</p>
+
+  <div class="sl">
+    <div class="sl-row">
+      <div class="sl-name">WAL Writer</div>
+      <div class="sl-body">
+        <div class="sl-title">Async append of NDJSON entries. Monotonic sequence number via Interlocked.Increment.</div>
+        <div class="sl-desc">Opens with <code>FileMode.Append | FileOptions.Asynchronous | FileOptions.SequentialScan</code>. Uses <code>Utf8JsonWriter</code> writing directly to a pooled <code>ArrayBufferWriter&lt;byte&gt;</code>, then <code>RandomAccess.WriteAsync</code> for the OS write. Single <code>SemaphoreSlim</code> serializes appends.</div>
+        <div class="sl-api">RandomAccess.WriteAsync · Interlocked.Increment · ArrayPool&lt;byte&gt;</div>
+      </div>
+    </div>
+    <div class="sl-row">
+      <div class="sl-name">Batched fsync</div>
+      <div class="sl-body">
+        <div class="sl-title">PeriodicTimer fires every 2ms. One <code>Flush(flushToDisk:true)</code> covers all pending appends.</div>
+        <div class="sl-desc">Writers call <code>await _flushGate.WaitAsync(ct)</code> after Append. The flush loop calls <code>_fileStream.Flush(flushToDisk: true)</code>, updates <code>_flushedSeq</code>, then calls <code>_flushGate.Release(pendingCount)</code> to wake all waiting writers. This is the exact Go <code>sync.Cond.Broadcast()</code> equivalent.</div>
+        <div class="sl-api">PeriodicTimer · SemaphoreSlim · FileStream.Flush(flushToDisk:true)</div>
+      </div>
+    </div>
+    <div class="sl-row">
+      <div class="sl-name">Segment Rotation</div>
+      <div class="sl-body">
+        <div class="sl-title">Rotate WAL file when it exceeds 64 MB. Sealed files are immutable.</div>
+        <div class="sl-desc">Background task monitors <code>new FileInfo(walPath).Length</code> after each flush. On threshold: flush current, rename to <code>wal-{seq:D8}.log</code>, open new active file. <code>FileSystemWatcher</code> is not used — polling is simpler and avoids platform differences.</div>
+        <div class="sl-api">FileInfo.Length · File.Move · FileOptions.Asynchronous</div>
+      </div>
+    </div>
+    <div class="sl-row">
+      <div class="sl-name">Snapshots</div>
+      <div class="sl-body">
+        <div class="sl-title">Full StateStore dump every 5 min. Uses write-to-temp + <code>File.Replace</code> for atomic swap.</div>
+        <div class="sl-desc">Iterate all 64 shards under read locks (held briefly per shard, not globally). Serialize to <code>snapshot.tmp</code> via <code>Utf8JsonWriter</code>. Call <code>File.Replace(tmp, snapshot, backup)</code> for atomic rename. On restart: deserialize snapshot → replay WAL from snapshot's last Seq.</div>
+        <div class="sl-api">File.Replace · Utf8JsonWriter · JsonSerializerContext (AOT-safe)</div>
+      </div>
+    </div>
+    <div class="sl-row">
+      <div class="sl-name">No-op Mode</div>
+      <div class="sl-body">
+        <div class="sl-title"><code>NullWalWriter</code> implements <code>IWalWriter</code>. All calls return immediately.</div>
+        <div class="sl-desc">The <code>IWalWriter</code> abstraction means the StateStore doesn't know whether it's writing to disk or not. Inject <code>NullWalWriter</code> for pure in-memory operation. State is lost on restart. Suitable for ephemeral deployments and unit tests.</div>
+        <div class="sl-api">IWalWriter (interface) · NullWalWriter : IWalWriter</div>
+      </div>
+    </div>
+  </div>
+
+<pre><span class="lang-tag">C# — WAL with Batched fsync</span><span class="kw">public sealed class</span> <span class="tp">WalWriter</span> : <span class="tp">IWalWriter</span>, <span class="tp">IAsyncDisposable</span>
+{
+    <span class="kw">private readonly</span> <span class="tp">FileStream</span> _file;
+    <span class="kw">private readonly</span> <span class="tp">SemaphoreSlim</span> _appendLock = <span class="kw">new</span>(<span class="nm">1</span>, <span class="nm">1</span>);
+    <span class="kw">private readonly</span> <span class="tp">SemaphoreSlim</span> _flushGate  = <span class="kw">new</span>(<span class="nm">0</span>);   <span class="cm">// writers wait here</span>
+    <span class="kw">private volatile long</span> _seq;
+    <span class="kw">private volatile long</span> _flushedSeq;
+    <span class="kw">private int</span> _waitingWriters;
+
+    <span class="kw">public</span> <span class="tp">WalWriter</span>(<span class="tp">string</span> path) =>
+        _file = <span class="kw">new</span> <span class="tp">FileStream</span>(path,
+            <span class="tp">FileMode</span>.Append, <span class="tp">FileAccess</span>.Write, <span class="tp">FileShare</span>.Read,
+            bufferSize: <span class="nm">65536</span>,
+            <span class="tp">FileOptions</span>.Asynchronous | <span class="tp">FileOptions</span>.SequentialScan);
+
+    <span class="kw">public async</span> <span class="tp">ValueTask</span>&lt;<span class="tp">long</span>&gt; <span class="fn">AppendAsync</span>(
+        <span class="tp">string</span> topic, <span class="tp">JsonElement</span> payload, <span class="tp">CancellationToken</span> ct)
+    {
+        <span class="kw">var</span> buf = <span class="kw">new</span> <span class="tp">ArrayBufferWriter</span>&lt;<span class="tp">byte</span>&gt;();
+        <span class="kw">var</span> writer = <span class="kw">new</span> <span class="tp">Utf8JsonWriter</span>(buf);
+        <span class="kw">var</span> seq = <span class="tp">Interlocked</span>.<span class="fn">Increment</span>(<span class="kw">ref</span> _seq);
+        writer.<span class="fn">WriteStartObject</span>();
+        writer.<span class="fn">WriteNumber</span>(<span class="st">"seq"</span>, seq);
+        writer.<span class="fn">WriteString</span>(<span class="st">"topic"</span>, topic);
+        writer.<span class="fn">WritePropertyName</span>(<span class="st">"payload"</span>);
+        payload.<span class="fn">WriteTo</span>(writer);
+        writer.<span class="fn">WriteEndObject</span>();
+        <span class="kw">await</span> writer.<span class="fn">FlushAsync</span>(ct);
+        buf.<span class="fn">Write</span>(<span class="st">"\n"u8</span>);  <span class="cm">// NDJSON delimiter</span>
+
+        <span class="kw">await</span> _appendLock.<span class="fn">WaitAsync</span>(ct);
+        <span class="kw">try</span>   { <span class="kw">await</span> _file.<span class="fn">WriteAsync</span>(buf.WrittenMemory, ct); }
+        <span class="kw">finally</span> { _appendLock.<span class="fn">Release</span>(); }
+        <span class="kw">return</span> seq;
+    }
+
+    <span class="kw">public async</span> <span class="tp">ValueTask</span> <span class="fn">WaitFlushedAsync</span>(<span class="tp">long</span> seq, <span class="tp">CancellationToken</span> ct)
+    {
+        <span class="kw">if</span> (<span class="tp">Volatile</span>.<span class="fn">Read</span>(<span class="kw">ref</span> _flushedSeq) >= seq) <span class="kw">return</span>;  <span class="cm">// fast path</span>
+        <span class="tp">Interlocked</span>.<span class="fn">Increment</span>(<span class="kw">ref</span> _waitingWriters);
+        <span class="kw">await</span> _flushGate.<span class="fn">WaitAsync</span>(ct);
+    }
+
+    <span class="cm">// Called by background PeriodicTimer every 2ms</span>
+    <span class="kw">public async</span> <span class="tp">Task</span> <span class="fn">FlushLoopAsync</span>(<span class="tp">CancellationToken</span> ct)
+    {
+        <span class="kw">using var</span> timer = <span class="kw">new</span> <span class="tp">PeriodicTimer</span>(<span class="tp">TimeSpan</span>.<span class="fn">FromMilliseconds</span>(<span class="nm">2</span>));
+        <span class="kw">while</span> (<span class="kw">await</span> timer.<span class="fn">WaitForNextTickAsync</span>(ct))
+        {
+            <span class="kw">await</span> _file.<span class="fn">FlushAsync</span>(ct);               <span class="cm">// kernel buffer → disk</span>
+            <span class="tp">Volatile</span>.<span class="fn">Write</span>(<span class="kw">ref</span> _flushedSeq, _seq);
+            <span class="kw">var</span> waiting = <span class="tp">Interlocked</span>.<span class="fn">Exchange</span>(<span class="kw">ref</span> _waitingWriters, <span class="nm">0</span>);
+            <span class="kw">if</span> (waiting > <span class="nm">0</span>) _flushGate.<span class="fn">Release</span>(waiting);  <span class="cm">// wake all blocked writers</span>
+        }
+    }
+}</pre>
+</section>
+
+<!-- ── 06 BUILD ── -->
+<section id="build">
+  <div class="sec-hd"><span class="sec-num">06</span><h2>Cross-Platform Build &amp; Publish</h2></div>
+
+  <p>.NET 8 offers three deployment models. <strong>NativeAOT</strong> is the closest to Go's compilation model — a truly native binary with no .NET runtime dependency on the host.</p>
+
+  <table class="build-table">
+    <thead>
+      <tr><th>Mode</th><th>Command</th><th>Binary Size</th><th>Startup</th><th>Runtime on Host</th><th>Best For</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>NativeAOT ★</td>
+        <td>dotnet publish -c Release -r linux-x64 -p:PublishAot=true</td>
+        <td>~15 MB</td>
+        <td>~5ms</td>
+        <td>None</td>
+        <td>Production servers, edge, Docker scratch</td>
+      </tr>
+      <tr>
+        <td>Single File</td>
+        <td>dotnet publish -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true</td>
+        <td>~60 MB</td>
+        <td>~80ms</td>
+        <td>None (bundled)</td>
+        <td>Dev machines, easy distribution</td>
+      </tr>
+      <tr>
+        <td>Framework-dep.</td>
+        <td>dotnet publish -c Release -r linux-x64 --no-self-contained</td>
+        <td>~1 MB</td>
+        <td>~100ms</td>
+        <td>.NET 8 runtime required</td>
+        <td>Servers with managed .NET install</td>
+      </tr>
+    </tbody>
+  </table>
+
+<pre><span class="lang-tag">Shell — Build Matrix</span><span class="cm"># ── NativeAOT (recommended — Go-equivalent native binary) ─────────</span>
+dotnet publish -c Release -r linux-x64   -p:PublishAot=true -o dist/linux-x64
+dotnet publish -c Release -r linux-arm64 -p:PublishAot=true -o dist/linux-arm64
+dotnet publish -c Release -r win-x64     -p:PublishAot=true -o dist/win-x64
+dotnet publish -c Release -r osx-arm64   -p:PublishAot=true -o dist/osx-arm64
+
+<span class="cm"># ── Run ──────────────────────────────────────────────────────────</span>
+./dist/linux-x64/statebroker --addr :8080 --wal ./data --ping-interval 30s
+
+<span class="cm"># ── Docker scratch (smallest possible image) ─────────────────────</span>
+<span class="cm"># FROM mcr.microsoft.com/dotnet/runtime-deps:8.0 AS base</span>
+<span class="cm"># COPY dist/linux-x64/statebroker /app/statebroker</span>
+<span class="cm"># ENTRYPOINT ["/app/statebroker"]</span>
+<span class="cm"># Image size: ~35 MB total</span></pre>
+
+  <div class="callout g">
+    <strong>NativeAOT Constraints</strong>
+    AOT requires all types used in <code>System.Text.Json</code> serialization to be declared in a <code>JsonSerializerContext</code> with <code>[JsonSerializable]</code> attributes — no runtime reflection. This is a one-time setup (~30 lines) but is non-negotiable for AOT. Avoid any <code>Activator.CreateInstance</code>, dynamic types, or <code>Assembly.Load</code> in the broker core.
+  </div>
+
+<pre><span class="lang-tag">C# — AOT-Safe JSON Source Generator</span><span class="cm">// Declare all serializable types upfront — required for NativeAOT</span>
+[<span class="tp">JsonSerializable</span>(<span class="kw">typeof</span>(<span class="tp">Frame</span>))]
+[<span class="tp">JsonSerializable</span>(<span class="kw">typeof</span>(<span class="tp">WalEntry</span>))]
+[<span class="tp">JsonSerializable</span>(<span class="kw">typeof</span>(<span class="tp">BrokerConfig</span>))]
+[<span class="tp">JsonSourceGenerationOptions</span>(
+    PropertyNamingPolicy = <span class="tp">JsonKnownNamingPolicy</span>.SnakeCaseLower,
+    DefaultIgnoreCondition = <span class="tp">JsonIgnoreCondition</span>.WhenWritingNull)]
+<span class="kw">internal partial class</span> <span class="tp">BrokerJsonContext</span> : <span class="tp">JsonSerializerContext</span> { }
+
+<span class="cm">// Usage — zero reflection, AOT-safe</span>
+<span class="kw">var</span> frame = <span class="tp">JsonSerializer</span>.<span class="fn">Deserialize</span>(buffer, <span class="tp">BrokerJsonContext</span>.Default.<span class="tp">Frame</span>);
+<span class="kw">var</span> bytes = <span class="tp">JsonSerializer</span>.<span class="fn">SerializeToUtf8Bytes</span>(frame, <span class="tp">BrokerJsonContext</span>.Default.<span class="tp">Frame</span>);</pre>
+</section>
+
+<!-- ── 07 CONTRACTS ── -->
+<section id="contracts">
+  <div class="sec-hd"><span class="sec-num">07</span><h2>Interface Contracts</h2></div>
+
+  <p>Same seven interfaces as the Go design, expressed in C# with async signatures where I/O is involved. All swappable — <code>NullWalWriter</code>, <code>NoopConsensus</code>, in-process transport for testing.</p>
+
+<pre><span class="lang-tag">C# — Core Interfaces + Records</span><span class="kw">namespace</span> <span class="tp">StateBroker</span>.Core;
+
+<span class="cm">// Wire frame — all fields nullable except Type</span>
+<span class="kw">public sealed record</span> <span class="tp">Frame</span>(
+    <span class="tp">string</span>      Type,               <span class="cm">// PUBLISH | SUBSCRIBE | ACK | DELIVER | PING | PONG</span>
+    <span class="tp">string</span>?     Topic    = <span class="kw">null</span>,
+    <span class="tp">int</span>         Qos      = <span class="nm">0</span>,
+    <span class="tp">string</span>?     MsgId    = <span class="kw">null</span>,
+    <span class="tp">bool</span>        Retain   = <span class="kw">false</span>,
+    <span class="tp">bool</span>        Retained = <span class="kw">false</span>,
+    <span class="tp">JsonElement</span> Payload  = <span class="kw">default</span>
+);
+
+<span class="cm">// Transport — implement for WebSocket, TCP, or in-process</span>
+<span class="kw">public interface</span> <span class="tp">ITransport</span>
+{
+    <span class="tp">IAsyncEnumerable</span>&lt;<span class="tp">IConnection</span>&gt; <span class="fn">AcceptAsync</span>(<span class="tp">CancellationToken</span> ct);
+}
+<span class="kw">public interface</span> <span class="tp">IConnection</span>
+{
+    <span class="tp">string</span> ClientId { <span class="kw">get</span>; }
+    <span class="tp">IAsyncEnumerable</span>&lt;<span class="tp">Frame</span>&gt; <span class="fn">ReadFramesAsync</span>(<span class="tp">CancellationToken</span> ct);
+    <span class="tp">ValueTask</span> <span class="fn">SendAsync</span>(<span class="tp">Frame</span> frame, <span class="tp">CancellationToken</span> ct);
+    <span class="tp">ValueTask</span> <span class="fn">CloseAsync</span>();
+}
+
+<span class="cm">// Durable desired-state store</span>
+<span class="kw">public interface</span> <span class="tp">IStateStore</span>
+{
+    <span class="tp">ValueTask</span>       <span class="fn">SetAsync</span>(<span class="tp">string</span> topic, <span class="tp">JsonElement</span> payload, <span class="tp">CancellationToken</span> ct);
+    <span class="tp">JsonElement</span>?    <span class="fn">Get</span>(<span class="tp">string</span> topic);
+    <span class="tp">IEnumerable</span>&lt;(<span class="tp">string</span> Topic, <span class="tp">JsonElement</span> Payload)&gt; <span class="fn">GetAll</span>();
+}
+
+<span class="cm">// Per-subscriber QoS 1 delivery manager</span>
+<span class="kw">public interface</span> <span class="tp">IQosEngine</span>
+{
+    <span class="tp">ValueTask</span>       <span class="fn">EnqueueAsync</span>(<span class="tp">string</span> clientId, <span class="tp">Frame</span> frame, <span class="tp">CancellationToken</span> ct);
+    <span class="tp">ValueTask</span>       <span class="fn">AckAsync</span>(<span class="tp">string</span> clientId, <span class="tp">string</span> msgId, <span class="tp">CancellationToken</span> ct);
+    <span class="tp">IReadOnlyList</span>&lt;<span class="tp">Frame</span>&gt; <span class="fn">GetPending</span>(<span class="tp">string</span> clientId);
+    <span class="tp">ValueTask</span>       <span class="fn">EvictAsync</span>(<span class="tp">string</span> clientId, <span class="tp">CancellationToken</span> ct);
+}
+
+<span class="cm">// WAL durability backend — swap for NullWalWriter in tests</span>
+<span class="kw">public interface</span> <span class="tp">IWalWriter</span> : <span class="tp">IAsyncDisposable</span>
+{
+    <span class="tp">ValueTask</span>&lt;<span class="tp">long</span>&gt; <span class="fn">AppendAsync</span>(<span class="tp">string</span> topic, <span class="tp">JsonElement</span> payload, <span class="tp">CancellationToken</span> ct);
+    <span class="tp">ValueTask</span>       <span class="fn">WaitFlushedAsync</span>(<span class="tp">long</span> seq, <span class="tp">CancellationToken</span> ct);
+    <span class="tp">IAsyncEnumerable</span>&lt;<span class="tp">WalEntry</span>&gt; <span class="fn">ReplayAsync</span>(<span class="tp">CancellationToken</span> ct);
+}
+
+<span class="cm">// Consensus — NoopConsensus passes writes through immediately</span>
+<span class="kw">public interface</span> <span class="tp">IConsensusLayer</span>
+{
+    <span class="tp">ValueTask</span> <span class="fn">ProposeAsync</span>(<span class="tp">ReadOnlyMemory</span>&lt;<span class="tp">byte</span>&gt; data, <span class="tp">CancellationToken</span> ct);
+    <span class="tp">bool</span> IsLeader { <span class="kw">get</span>; }
+}
+<span class="kw">public sealed class</span> <span class="tp">NoopConsensus</span> : <span class="tp">IConsensusLayer</span>
+{
+    <span class="kw">public</span> <span class="tp">ValueTask</span> <span class="fn">ProposeAsync</span>(<span class="tp">ReadOnlyMemory</span>&lt;<span class="tp">byte</span>&gt; data, <span class="tp">CancellationToken</span> ct) =>
+        <span class="tp">ValueTask</span>.CompletedTask;
+    <span class="kw">public bool</span> IsLeader => <span class="kw">true</span>;
+}</pre>
+</section>
+
+<!-- ── 08 CONFIG ── -->
+<section id="config">
+  <div class="sec-hd"><span class="sec-num">08</span><h2>Configuration Reference</h2></div>
+  <p>Uses <code>System.Text.Json</code> to deserialize <code>appsettings.json</code> directly into a record — no <code>Microsoft.Extensions.Configuration</code> required, keeping dependencies at zero.</p>
+
+<pre><span class="lang-tag">JSON — appsettings.json</span>{
+  <span class="st">"addr"</span>: <span class="st">":8080"</span>,
+  <span class="st">"store"</span>: {
+    <span class="st">"mode"</span>:              <span class="st">"wal"</span>,        <span class="cm">// "wal" | "noop"</span>
+    <span class="st">"walDir"</span>:            <span class="st">"./data"</span>,
+    <span class="st">"segmentMb"</span>:         <span class="nm">64</span>,
+    <span class="st">"snapshotInterval"</span>:  <span class="st">"00:05:00"</span>,   <span class="cm">// TimeSpan format</span>
+    <span class="st">"fsyncIntervalMs"</span>:   <span class="nm">2</span>,
+    <span class="st">"shards"</span>:            <span class="nm">64</span>
+  },
+  <span class="st">"qos"</span>: {
+    <span class="st">"retryBase"</span>:         <span class="st">"00:00:01"</span>,
+    <span class="st">"retryMax"</span>:          <span class="st">"00:01:00"</span>,
+    <span class="st">"sessionTtl"</span>:        <span class="st">"1.00:00:00"</span>
+  },
+  <span class="st">"session"</span>: {
+    <span class="st">"sendBufferDepth"</span>:   <span class="nm">256</span>,
+    <span class="st">"pingInterval"</span>:      <span class="st">"00:00:30"</span>
+  },
+  <span class="st">"cluster"</span>: {
+    <span class="st">"mode"</span>:              <span class="st">"single"</span>,     <span class="cm">// "single" | "replica" | "raft"</span>
+    <span class="st">"peers"</span>:             [],
+    <span class="st">"raftElectionTimeout"</span>: <span class="st">"00:00:00.150"</span>
+  }
+}</pre>
+
+  <table class="cfg-table">
+    <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>store.mode</td><td>"wal"</td><td><code>wal</code> for crash-safe persistence. <code>noop</code> for pure in-memory (dev/test)</td></tr>
+      <tr><td>store.fsyncIntervalMs</td><td>2</td><td>Batched fsync window in ms. Lower = more durable, lower throughput. Min: 1</td></tr>
+      <tr><td>store.shards</td><td>64</td><td>RWLS shard count. Must be power of 2. Increase for very high topic cardinality (&gt;100k topics)</td></tr>
+      <tr><td>qos.retryBase</td><td>1s</td><td>QoS 1 initial retry interval. Doubles each attempt up to retryMax</td></tr>
+      <tr><td>qos.sessionTtl</td><td>24h</td><td>How long to preserve the per-client outbox after disconnect before eviction</td></tr>
+      <tr><td>session.sendBufferDepth</td><td>256</td><td>Bounded channel depth per session. QoS 0 frames dropped silently on overflow</td></tr>
+      <tr><td>cluster.mode</td><td>"single"</td><td><code>single</code> = NoopConsensus. <code>raft</code> = DotNext.Net.Cluster (adds one NuGet)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout g">
+    <strong>Startup Sequence</strong>
+    1. Deserialize <code>appsettings.json</code> → <code>BrokerConfig</code> record → 2. Resolve <code>IWalWriter</code> (WalWriter or NullWalWriter) → 3. Replay WAL into StateStore → 4. Load latest snapshot, apply delta → 5. Start <code>WalWriter.FlushLoopAsync</code> background task → 6. Optionally start Raft node → 7. Start <code>HttpListener</code>, begin accepting WebSocket upgrades. Shutdown reverses: drain send channels → final <code>FlushAsync(flushToDisk:true)</code> → dispose WAL writer.
+  </div>
+
+  <h3>Go vs .NET — Key Differences Summary</h3>
+
+  <table class="diff-table">
+    <thead>
+      <tr><th>Area</th><th class="go-col">Go Version</th><th class="cs-col">.NET Version</th><th>Impact</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Concurrency model</td>
+        <td class="go-col">goroutine (M:N scheduler)</td>
+        <td class="cs-col">Task + async/await (ThreadPool)</td>
+        <td class="note-col">Functionally equivalent. .NET ThreadPool auto-scales. async permeates all I/O.</td>
+      </tr>
+      <tr>
+        <td>Read-write locking</td>
+        <td class="go-col">sync.RWMutex</td>
+        <td class="cs-col">ReaderWriterLockSlim</td>
+        <td class="note-col">RWLS is NOT async-safe. Must never hold across await. Use SemaphoreSlim(1,1) for async-guarded sections.</td>
+      </tr>
+      <tr>
+        <td>Typed channels</td>
+        <td class="go-col">chan T (select)</td>
+        <td class="cs-col">Channel&lt;T&gt; (await ReadAsync)</td>
+        <td class="note-col">.NET channels have richer options: BoundedChannelFullMode, SingleReader hint, CompleteWriting for graceful shutdown.</td>
+      </tr>
+      <tr>
+        <td>Network I/O</td>
+        <td class="go-col">net.Conn + bufio.Reader</td>
+        <td class="cs-col">System.IO.Pipelines.PipeReader</td>
+        <td class="note-col">Pipelines is zero-copy and handles partial reads automatically. More complex API but better throughput.</td>
+      </tr>
+      <tr>
+        <td>Binary size</td>
+        <td class="go-col">~8 MB (static)</td>
+        <td class="cs-col">~15 MB (NativeAOT) / 60 MB (self-contained)</td>
+        <td class="note-col">NativeAOT nearly matches Go. Self-contained includes full runtime — significantly larger.</td>
+      </tr>
+      <tr>
+        <td>Startup time</td>
+        <td class="go-col">&lt;5ms</td>
+        <td class="cs-col">~5ms (AOT) / ~80-150ms (JIT)</td>
+        <td class="note-col">AOT matches Go. JIT mode has JIT warmup cost — acceptable for long-running broker process.</td>
+      </tr>
+      <tr>
+        <td>Conditional compilation</td>
+        <td class="go-col">build tags</td>
+        <td class="cs-col">#if / MSBuild Condition</td>
+        <td class="note-col">Used to exclude DotNext.Raft from core build when cluster.mode=single.</td>
+      </tr>
+      <tr>
+        <td>Memory model</td>
+        <td class="go-col">GC (tri-color mark-sweep)</td>
+        <td class="cs-col">GC (generational) + Span&lt;T&gt; stack alloc</td>
+        <td class="note-col">Use Span&lt;T&gt; / ArrayPool&lt;T&gt; in WAL hot path to minimize Gen0 allocations and GC pressure.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+</div>
+
+<footer>
+  <span>.NET Core Minimal State Broker · Design Spec v1.0 · .NET 8 · C# 12 · NativeAOT</span>
+  <span>Zero NuGet core · System.Threading.Channels · ReaderWriterLockSlim · IO.Pipelines · PeriodicTimer</span>
+</footer>
+
+</body>
+</html>

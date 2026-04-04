@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>.NET Raft — Distributed Message Store</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700;900&family=Barlow+Condensed:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:       #040d18;
+  --surface:  #071525;
+  --panel:    #0a1e32;
+  --border:   #0e2a42;
+  --border2:  #163a58;
+  --text:     #a8c8e0;
+  --dim:      #2a5070;
+  --cyan:     #00c8e0;
+  --cyan2:    #40e0f0;
+  --teal:     #00a878;
+  --amber:    #f0a830;
+  --red:      #e05040;
+  --purple:   #9060f0;
+  --mono:     'Share Tech Mono', monospace;
+  --sans:     'Barlow', sans-serif;
+  --cond:     'Barlow Condensed', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.65;
+  background-image:
+    linear-gradient(rgba(0,200,224,.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,200,224,.015) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ── HEADER ── */
+header {
+  border-bottom: 1px solid var(--border2);
+  padding: 3rem 3.5rem 2.5rem;
+  position: relative;
+  overflow: hidden;
+}
+header::before {
+  content: 'RAFT';
+  position: absolute;
+  right: 2rem; top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--cond);
+  font-size: 11rem;
+  font-weight: 900;
+  color: rgba(0,200,224,.03);
+  letter-spacing: -.04em;
+  pointer-events: none;
+  line-height: 1;
+}
+.h-grid { display: grid; grid-template-columns: 1fr auto; gap: 2rem; align-items: start; max-width: 1180px; margin: 0 auto; }
+.h-eyebrow {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .2em;
+  color: var(--cyan);
+  margin-bottom: .7rem;
+  text-transform: uppercase;
+}
+h1 {
+  font-family: var(--cond);
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -.01em;
+  color: #e0f4ff;
+}
+h1 .dim { color: var(--dim); font-weight: 300; }
+.h-sub {
+  margin-top: .9rem;
+  font-size: .92rem;
+  color: #4a7898;
+  line-height: 1.8;
+  max-width: 580px;
+}
+.h-tags { margin-top: 1.2rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+.htag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  padding: 3px 9px;
+  border: 1px solid var(--border2);
+  color: var(--dim);
+}
+.htag.c { border-color: var(--cyan); color: var(--cyan); }
+.htag.t { border-color: var(--teal); color: var(--teal); }
+.htag.a { border-color: var(--amber); color: var(--amber); }
+
+.h-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); border: 1px solid var(--border); min-width: 200px; }
+.hs { background: var(--surface); padding: .85rem 1rem; text-align: center; }
+.hs-val { font-family: var(--mono); font-size: 1.1rem; color: var(--cyan2); display: block; }
+.hs-key { font-family: var(--mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+
+/* ── NAV ── */
+nav {
+  border-bottom: 1px solid var(--border);
+  padding: 0 3.5rem;
+  display: flex;
+  overflow-x: auto;
+  background: var(--surface);
+}
+nav a {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  text-decoration: none;
+  padding: .8rem 1.1rem;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+  transition: color .15s, background .15s;
+}
+nav a:first-child { border-left: 1px solid var(--border); }
+nav a:hover { color: var(--cyan); background: rgba(0,200,224,.04); }
+
+/* ── LAYOUT ── */
+.page { max-width: 1180px; margin: 0 auto; padding: 0 3.5rem 6rem; }
+section { padding: 3.5rem 0; border-bottom: 1px solid var(--border); }
+section:last-child { border-bottom: none; }
+.sec-hd { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 2rem; }
+.sec-num { font-family: var(--mono); font-size: 9px; letter-spacing: .15em; color: var(--dim); border: 1px solid var(--border2); padding: 2px 7px; }
+h2 { font-family: var(--cond); font-size: 1.6rem; font-weight: 700; letter-spacing: -.01em; color: #d0e8f8; }
+h3 { font-family: var(--mono); font-size: 9px; letter-spacing: .18em; text-transform: uppercase; color: var(--cyan); margin: 2.2rem 0 1rem; padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+p { color: #4a7898; font-size: .91rem; line-height: 1.8; margin-bottom: .9rem; }
+p strong { color: var(--text); }
+code { font-family: var(--mono); font-size: .82em; color: var(--cyan); background: rgba(0,200,224,.06); padding: 1px 5px; }
+
+/* ── CODE ── */
+pre {
+  background: #020b14;
+  color: #c0d8f0;
+  font-family: var(--mono);
+  font-size: .75rem;
+  line-height: 1.9;
+  padding: 1.6rem 2rem;
+  overflow-x: auto;
+  border-left: 2px solid var(--cyan);
+  margin: 1rem 0 1.5rem;
+  position: relative;
+}
+pre .lang { position: absolute; top: .5rem; right: .9rem; font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--border2); }
+.kw  { color: #a080f0; }
+.tp  { color: #60b8f0; }
+.fn  { color: #40d0a8; }
+.st  { color: #80d060; }
+.cm  { color: #1a3a50; font-style: italic; }
+.nm  { color: #f0a060; }
+.at  { color: #f0c060; }
+.op  { color: #f06060; }
+
+/* ── RAFT FLOW DIAGRAM ── */
+.raft-flow {
+  display: grid;
+  grid-template-columns: 1fr 28px 1fr 28px 1fr;
+  gap: 0;
+  align-items: stretch;
+  margin: 1.5rem 0;
+  border: 1px solid var(--border);
+}
+.rf-node {
+  background: var(--panel);
+  padding: 1.2rem 1.3rem;
+  border-right: 1px solid var(--border);
+  position: relative;
+}
+.rf-node:last-child { border-right: none; }
+.rf-node.leader { border-top: 2px solid var(--teal); }
+.rf-node.follower { border-top: 2px solid var(--cyan); }
+.rf-node.follower2 { border-top: 2px solid var(--dim); }
+.rf-role { font-family: var(--mono); font-size: 8.5px; letter-spacing: .14em; text-transform: uppercase; margin-bottom: .5rem; }
+.rf-node.leader .rf-role { color: var(--teal); }
+.rf-node.follower .rf-role { color: var(--cyan); }
+.rf-node.follower2 .rf-role { color: var(--dim); }
+.rf-name { font-family: var(--cond); font-size: 1.1rem; font-weight: 700; color: #d0e8f8; margin-bottom: .3rem; }
+.rf-desc { font-size: .78rem; color: #2a5878; line-height: 1.55; }
+.rf-status {
+  position: absolute; top: .6rem; right: .8rem;
+  font-family: var(--mono); font-size: 8px; letter-spacing: .1em;
+  padding: 2px 7px;
+  border: 1px solid;
+}
+.rf-node.leader .rf-status { border-color: var(--teal); color: var(--teal); }
+.rf-node.follower .rf-status { border-color: var(--cyan); color: var(--cyan); }
+.rf-arrow {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  flex-direction: column;
+  gap: 4px;
+}
+.rf-arrow span { font-family: var(--mono); font-size: 7px; color: var(--dim); writing-mode: vertical-rl; }
+
+/* ── WRITE PATH ── */
+.wp { border: 1px solid var(--border); margin: 1.5rem 0; }
+.wp-step { display: grid; grid-template-columns: 44px 1fr auto; border-bottom: 1px solid var(--border); }
+.wp-step:last-child { border-bottom: none; }
+.wp-n { font-family: var(--mono); font-size: .68rem; color: var(--dim); display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--border); background: var(--surface); }
+.wp-b { padding: .85rem 1.2rem; }
+.wp-title { font-family: var(--mono); font-size: .77rem; font-weight: 600; color: var(--text); margin-bottom: .2rem; }
+.wp-note { font-size: .79rem; color: #2a5878; line-height: 1.6; }
+.wp-badge { padding: .85rem 1rem; display: flex; align-items: center; }
+.pill { font-family: var(--mono); font-size: 8.5px; letter-spacing: .09em; text-transform: uppercase; padding: 2px 8px; }
+.pill.c  { background: rgba(0,200,224,.1); color: var(--cyan); }
+.pill.t  { background: rgba(0,168,120,.1); color: var(--teal); }
+.pill.a  { background: rgba(240,168,48,.1); color: var(--amber); }
+.pill.r  { background: rgba(224,80,64,.1);  color: var(--red); }
+.wp-phase {
+  grid-column: 1 / -1;
+  background: var(--surface);
+  padding: .4rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.phase-label { font-family: var(--mono); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--dim); }
+.phase-label.teal { color: var(--teal); }
+.phase-label.cyan { color: var(--cyan); }
+.phase-label.amber { color: var(--amber); }
+
+/* ── COMPONENT TABLE ── */
+.comp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  margin: 1.5rem 0;
+}
+.cc {
+  background: var(--surface);
+  padding: 1.2rem 1.4rem;
+  position: relative;
+}
+.cc.hot { border-left: 2px solid var(--cyan); }
+.cc.raft { border-left: 2px solid var(--teal); }
+.cc.local { border-left: 2px solid var(--dim); }
+.cc-name { font-family: var(--mono); font-size: .79rem; font-weight: 600; margin-bottom: .3rem; }
+.cc.hot .cc-name { color: var(--cyan); }
+.cc.raft .cc-name { color: var(--teal); }
+.cc.local .cc-name { color: var(--dim); }
+.cc-tag { font-family: var(--mono); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: .5rem; display: block; }
+.cc.hot .cc-tag { color: rgba(0,200,224,.5); }
+.cc.raft .cc-tag { color: rgba(0,168,120,.5); }
+.cc.local .cc-tag { color: rgba(42,80,112,.7); }
+.cc-desc { font-size: .81rem; color: #2a5878; line-height: 1.6; }
+
+/* ── WHAT GOES THROUGH RAFT ── */
+.scope-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  margin: 1.5rem 0;
+}
+@media (max-width: 700px) { .scope-grid { grid-template-columns: 1fr; } }
+.scope-cell { background: var(--panel); padding: 1.3rem 1.5rem; }
+.scope-title { font-family: var(--mono); font-size: .78rem; font-weight: 600; margin-bottom: 1rem; padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+.scope-cell:first-child .scope-title { color: var(--teal); }
+.scope-cell:last-child .scope-title { color: var(--dim); }
+.scope-row { display: flex; gap: .8rem; margin-bottom: .7rem; align-items: flex-start; }
+.scope-icon { font-size: .9rem; flex-shrink: 0; line-height: 1.3; }
+.scope-text { font-size: .81rem; color: #2a5878; line-height: 1.6; }
+.scope-text strong { color: var(--text); display: block; font-size: .8rem; margin-bottom: .1rem; }
+
+/* ── CALLOUT ── */
+.callout {
+  border-left: 2px solid var(--cyan);
+  background: rgba(0,200,224,.04);
+  padding: 1rem 1.4rem;
+  margin: 1.2rem 0;
+  font-size: .87rem;
+  color: #2a5878;
+  line-height: 1.8;
+}
+.callout strong { font-family: var(--mono); font-size: .73rem; letter-spacing: .1em; text-transform: uppercase; color: var(--cyan); display: block; margin-bottom: .3rem; }
+.callout.t { border-color: var(--teal); background: rgba(0,168,120,.04); }
+.callout.t strong { color: var(--teal); }
+.callout.a { border-color: var(--amber); background: rgba(240,168,48,.04); }
+.callout.a strong { color: var(--amber); }
+.callout.r { border-color: var(--red); background: rgba(224,80,64,.04); }
+.callout.r strong { color: var(--red); }
+
+/* ── CONSISTENCY TABLE ── */
+.cons-table { width: 100%; border-collapse: collapse; margin: 1.2rem 0; font-size: .82rem; }
+.cons-table thead tr { background: var(--surface); }
+.cons-table th { font-family: var(--mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; padding: .6rem 1rem; text-align: left; font-weight: 400; color: var(--dim); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border2); }
+.cons-table th.c { color: var(--cyan); }
+.cons-table th.t { color: var(--teal); }
+.cons-table td { padding: .65rem 1rem; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); color: #2a5878; vertical-align: middle; }
+.cons-table td:first-child { font-family: var(--mono); font-size: .75rem; color: var(--text); }
+.yes { color: var(--teal); font-family: var(--mono); font-weight: 600; }
+.no  { color: var(--red);  font-family: var(--mono); }
+.opt { color: var(--amber); font-family: var(--mono); font-size: .75rem; font-style: italic; }
+
+footer {
+  border-top: 1px solid var(--border2);
+  padding: 1.5rem 3.5rem;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .07em;
+  color: var(--dim);
+}
+
+@media (max-width: 640px) {
+  header, .page, nav, footer { padding-left: 1.2rem; padding-right: 1.2rem; }
+  .h-grid { grid-template-columns: 1fr; }
+  .raft-flow { grid-template-columns: 1fr; }
+  .rf-arrow { display: none; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-grid">
+    <div>
+      <p class="h-eyebrow">Distributed Consensus · .NET 8 · DotNext.Raft</p>
+      <h1>Raft-Backed<br>Message Store<br><span class="dim">Consensus Layer Design</span></h1>
+      <p class="h-sub">How the .NET broker distributes the StateStore across nodes using the Raft consensus protocol — write path, state machine, snapshot replication, and what does and doesn't go through Raft.</p>
+      <div class="h-tags">
+        <span class="htag c">DotNext.Net.Cluster</span>
+        <span class="htag c">IRaftStateMachine</span>
+        <span class="htag t">PersistentState</span>
+        <span class="htag t">AppendEntries RPC</span>
+        <span class="htag a">Leader Election</span>
+        <span class="htag">Read Index</span>
+        <span class="htag">Log Compaction</span>
+      </div>
+    </div>
+    <div class="h-stats">
+      <div class="hs"><span class="hs-val">3</span><span class="hs-key">Min Nodes</span></div>
+      <div class="hs"><span class="hs-val">2/3</span><span class="hs-key">Quorum</span></div>
+      <div class="hs"><span class="hs-val">1</span><span class="hs-key">NuGet Pkg</span></div>
+      <div class="hs"><span class="hs-val">RTT</span><span class="hs-key">Write Cost</span></div>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <a href="#scope">What Uses Raft</a>
+  <a href="#architecture">Node Architecture</a>
+  <a href="#write-path">Write Path</a>
+  <a href="#state-machine">State Machine</a>
+  <a href="#snapshots">Snapshots</a>
+  <a href="#reads">Read Distribution</a>
+  <a href="#code">Full Code</a>
+  <a href="#config">Config</a>
+</nav>
+
+<div class="page">
+
+<!-- ── 01 SCOPE ── -->
+<section id="scope">
+  <div class="sec-hd"><span class="sec-num">01</span><h2>What Goes Through Raft vs What Stays Local</h2></div>
+
+  <p>Raft is a <strong>consensus protocol for ordering writes</strong>, not a general message bus. The critical insight: only the <strong>desired-state mutations</strong> go through Raft. The QoS delivery outbox, session management, and fire-and-forget commands stay local to each node.</p>
+
+  <div class="scope-grid">
+    <div class="scope-cell">
+      <div class="scope-title">▶ THROUGH RAFT (replicated, linearizable)</div>
+
+      <div class="scope-row">
+        <div class="scope-icon">📦</div>
+        <div class="scope-text">
+          <strong>Retained state writes (SET)</strong>
+          Any PUBLISH with <code>retain:true</code>. This is a desired-state mutation. Every node must agree on the latest payload for each topic. Raft ensures all nodes apply it in the same order.
+        </div>
+      </div>
+      <div class="scope-row">
+        <div class="scope-icon">🗑</div>
+        <div class="scope-text">
+          <strong>Retained state deletes</strong>
+          Publishing a zero-length payload to a retained topic clears it. Must also go through Raft so all nodes delete in the same log position.
+        </div>
+      </div>
+      <div class="scope-row">
+        <div class="scope-icon">📋</div>
+        <div class="scope-text">
+          <strong>Subscription persistence (optional)</strong>
+          If you want "durable subscriptions" — where a clientId's topic subscriptions survive broker restart and are visible across nodes — they must be Raft-replicated. Off by default.
+        </div>
+      </div>
+    </div>
+
+    <div class="scope-cell">
+      <div class="scope-title">▷ LOCAL ONLY (per-node, not replicated)</div>
+
+      <div class="scope-row">
+        <div class="scope-icon">💨</div>
+        <div class="scope-text">
+          <strong>QoS 0 commands (fire-and-forget)</strong>
+          Ephemeral by definition. No storage, no Raft. Delivered on the node the publisher connects to. If subscriber is on another node, use broker bridge or client load balancing.
+        </div>
+      </div>
+      <div class="scope-row">
+        <div class="scope-icon">📬</div>
+        <div class="scope-text">
+          <strong>QoS 1 delivery outbox</strong>
+          The per-clientId pending delivery tracking is local. Each node manages its own connected clients. If a client reconnects to a different node, it re-subscribes and receives current retained state from Raft-consistent StateStore.
+        </div>
+      </div>
+      <div class="scope-row">
+        <div class="scope-icon">🔌</div>
+        <div class="scope-text">
+          <strong>Session / connection state</strong>
+          Which clientIds are connected to which node is local. Raft does not replicate live connection maps — this would create enormous churn for no benefit.
+        </div>
+      </div>
+      <div class="scope-row">
+        <div class="scope-icon">💓</div>
+        <div class="scope-text">
+          <strong>Heartbeats and pings</strong>
+          Client keepalive PING/PONG is purely between client and its connected broker node.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout t">
+    <strong>Core Invariant</strong>
+    After any <strong>committed</strong> Raft write, every live node's <code>StateStore.Get(topic)</code> returns the same payload — regardless of which node the client queries. This is the single-source-of-truth guarantee. The QoS delivery machinery on top of it is local per-node, but it always starts from this consistent foundation when pushing retained state to new subscribers.
+  </div>
+</section>
+
+<!-- ── 02 ARCHITECTURE ── -->
+<section id="architecture">
+  <div class="sec-hd"><span class="sec-num">02</span><h2>Three-Node Architecture</h2></div>
+
+  <p>Minimum 3 nodes. Quorum = 2. Can lose any 1 node and continue. Writes only accepted by the Raft leader. Followers serve reads and redirect writes.</p>
+
+  <div class="raft-flow">
+    <div class="rf-node leader">
+      <div class="rf-status">LEADER</div>
+      <div class="rf-role">Node 1</div>
+      <div class="rf-name">Broker A</div>
+      <div class="rf-desc">Accepts all PUBLISH (retain:true). Proposes entry to Raft log. Waits for quorum ACK before committing. Applies to local StateStore. Fans out to local subscribers.</div>
+    </div>
+    <div class="rf-arrow">
+      <span>AppendEntries RPC</span>
+    </div>
+    <div class="rf-node follower">
+      <div class="rf-status">FOLLOWER</div>
+      <div class="rf-role">Node 2</div>
+      <div class="rf-name">Broker B</div>
+      <div class="rf-desc">Receives log entries from leader. Votes on proposals. Applies committed entries to local StateStore in the same order. Serves retained-state reads. Redirects writes to leader.</div>
+    </div>
+    <div class="rf-arrow">
+      <span>AppendEntries RPC</span>
+    </div>
+    <div class="rf-node follower2">
+      <div class="rf-status">FOLLOWER</div>
+      <div class="rf-role">Node 3</div>
+      <div class="rf-name">Broker C</div>
+      <div class="rf-desc">Same as Node 2. Forms quorum with any one other node. Eligible to become leader on election timeout if Node A fails. All three maintain identical StateStore after commit.</div>
+    </div>
+  </div>
+
+  <h3>Component Ownership</h3>
+
+  <div class="comp-grid">
+    <div class="cc raft">
+      <div class="cc-name">RaftConsensusLayer</div>
+      <span class="cc-tag">Raft · writes leader-only</span>
+      <div class="cc-desc">Implements <code>IConsensusLayer</code>. Wraps <code>IRaftCluster.ReplicateAsync()</code>. On non-leader nodes, throws <code>LeaderChangedException</code> which triggers client redirect response.</div>
+    </div>
+    <div class="cc raft">
+      <div class="cc-name">BrokerStateMachine</div>
+      <span class="cc-tag">Raft · applied on all nodes</span>
+      <div class="cc-desc">Implements <code>IRaftStateMachine</code>. Raft calls <code>ApplyAsync()</code> only after quorum commits. Deserializes log entry → calls <code>StateStore.SetMemory()</code> (no WAL — Raft log IS the WAL).</div>
+    </div>
+    <div class="cc raft">
+      <div class="cc-name">BrokerPersistentState</div>
+      <span class="cc-tag">Raft · log + snapshot storage</span>
+      <div class="cc-desc">Extends <code>PersistentState</code> (DotNext). Stores Raft log on disk. Implements <code>CreateSnapshotAsync</code> to serialize full StateStore. Implements <code>ApplySnapshotAsync</code> for new node catch-up.</div>
+    </div>
+    <div class="cc hot">
+      <div class="cc-name">StateStore (sharded)</div>
+      <span class="cc-tag">shared · read any node</span>
+      <div class="cc-desc">Same 64-shard RWLS design. In Raft mode, <code>Set()</code> is called only from <code>BrokerStateMachine.ApplyAsync()</code> — not directly from the publish handler. Reads serve any node without Raft round-trip.</div>
+    </div>
+    <div class="cc hot">
+      <div class="cc-name">LeaderRouter</div>
+      <span class="cc-tag">cluster · redirect writes</span>
+      <div class="cc-desc">Intercepts PUBLISH frames on followers. Returns <code>{ type: "REDIRECT", leader: "broker-a:8080" }</code> to client. Client SDK auto-reconnects to leader. Eliminates proxy hop overhead.</div>
+    </div>
+    <div class="cc local">
+      <div class="cc-name">QoS Engine (local)</div>
+      <span class="cc-tag">local · not replicated</span>
+      <div class="cc-desc">Per-node, per-clientId outbox. Not Raft-replicated. On reconnect to any node, client re-subscribes and receives latest retained state from the consistent StateStore.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 03 WRITE PATH ── -->
+<section id="write-path">
+  <div class="sec-hd"><span class="sec-num">03</span><h2>Raft Write Path — Step by Step</h2></div>
+
+  <p>A retained-state PUBLISH touching the Raft layer. The key change vs single-node: the StateStore is <strong>not updated until Raft commits</strong>. The state machine's <code>ApplyAsync</code> is the only write gate.</p>
+
+  <div class="wp">
+
+    <div class="wp-phase"><span class="phase-label teal">Phase 1 — Publisher side</span></div>
+
+    <div class="wp-step">
+      <div class="wp-n">1</div>
+      <div class="wp-b">
+        <div class="wp-title">Client connects to any node → sends PUBLISH retain:true, QoS 1</div>
+        <div class="wp-note">Client may connect to a follower. The node checks <code>consensusLayer.IsLeader</code>. If not leader, it does NOT buffer or proxy the message.</div>
+      </div>
+      <div class="wp-badge"><span class="pill t">all nodes</span></div>
+    </div>
+
+    <div class="wp-step">
+      <div class="wp-n">2</div>
+      <div class="wp-b">
+        <div class="wp-title">Non-leader → return REDIRECT frame to client</div>
+        <div class="wp-note"><code>{ type: "REDIRECT", leader: "10.0.0.1:8080", term: 3 }</code>. Client SDK reconnects to leader address. No message loss — client hasn't received ACK yet. QoS 1 guarantees the retry.</div>
+      </div>
+      <div class="wp-badge"><span class="pill a">follower</span></div>
+    </div>
+
+    <div class="wp-phase"><span class="phase-label teal">Phase 2 — Leader processes write</span></div>
+
+    <div class="wp-step">
+      <div class="wp-n">3</div>
+      <div class="wp-b">
+        <div class="wp-title">Leader: encode WALEntry → propose to Raft log</div>
+        <div class="wp-note">Serialize <code>{ topic, payload, ts }</code> to <code>ReadOnlyMemory&lt;byte&gt;</code>. Call <code>await raftCluster.ReplicateAsync(new BrokerLogEntry(data), ct)</code>. This blocks until quorum or timeout.</div>
+      </div>
+      <div class="wp-badge"><span class="pill c">leader</span></div>
+    </div>
+
+    <div class="wp-phase"><span class="phase-label cyan">Phase 3 — Raft consensus (network round-trip)</span></div>
+
+    <div class="wp-step">
+      <div class="wp-n">4</div>
+      <div class="wp-b">
+        <div class="wp-title">AppendEntries RPC → followers persist to their Raft log</div>
+        <div class="wp-note">DotNext sends the entry to all followers. Each follower appends to its <code>PersistentState</code> log on disk and replies with <code>AppendEntriesResult{success:true, term:N}</code>.</div>
+      </div>
+      <div class="wp-badge"><span class="pill c">network</span></div>
+    </div>
+
+    <div class="wp-step">
+      <div class="wp-n">5</div>
+      <div class="wp-b">
+        <div class="wp-title">Quorum reached (2/3 ACKs) → entry committed in Raft log</div>
+        <div class="wp-note"><code>ReplicateAsync()</code> returns on the leader. The entry's index is now the <code>commitIndex</code>. All nodes will eventually apply entries up to this index.</div>
+      </div>
+      <div class="wp-badge"><span class="pill t">committed</span></div>
+    </div>
+
+    <div class="wp-phase"><span class="phase-label amber">Phase 4 — State machine apply (all nodes)</span></div>
+
+    <div class="wp-step">
+      <div class="wp-n">6</div>
+      <div class="wp-b">
+        <div class="wp-title">BrokerStateMachine.ApplyAsync() called on every node</div>
+        <div class="wp-note">DotNext calls <code>ApplyAsync()</code> with committed entries in order. Deserialize entry → <code>StateStore.SetMemory(topic, payload)</code>. No WAL here — the Raft log IS the write-ahead log. Memory-only update, fast path.</div>
+      </div>
+      <div class="wp-badge"><span class="pill t">all nodes</span></div>
+    </div>
+
+    <div class="wp-phase"><span class="phase-label cyan">Phase 5 — Delivery (leader only for this publish)</span></div>
+
+    <div class="wp-step">
+      <div class="wp-n">7</div>
+      <div class="wp-b">
+        <div class="wp-title">Leader fans out DELIVER to locally connected subscribers</div>
+        <div class="wp-note">After Apply completes, the leader (which handled the original PUBLISH) fans out to its local subscriber set via the QoS Engine. Subscribers on other nodes receive the state when they query via SUBSCRIBE or reconnect.</div>
+      </div>
+      <div class="wp-badge"><span class="pill c">leader-local</span></div>
+    </div>
+
+    <div class="wp-step">
+      <div class="wp-n">8</div>
+      <div class="wp-b">
+        <div class="wp-title">Leader sends PUBACK to publisher — write is complete</div>
+        <div class="wp-note">Only now does the publisher receive its QoS 1 ACK. The retained state is durable across a quorum of nodes. Publisher's at-least-once delivery guarantee is fully satisfied.</div>
+      </div>
+      <div class="wp-badge"><span class="pill t">durable</span></div>
+    </div>
+
+  </div>
+
+  <div class="callout r">
+    <strong>No Double WAL</strong>
+    When Raft is enabled, <code>IWalWriter</code> is injected as <code>NullWalWriter</code>. The Raft <code>PersistentState</code> on each node is the WAL. Writing to both would duplicate durability work for no benefit. The <code>StateStore.SetMemory()</code> call in <code>ApplyAsync</code> skips the WAL entirely — it only updates the in-memory shard map.
+  </div>
+</section>
+
+<!-- ── 04 STATE MACHINE ── -->
+<section id="state-machine">
+  <div class="sec-hd"><span class="sec-num">04</span><h2>The State Machine — Core of Raft Integration</h2></div>
+
+  <p>The state machine is what connects the Raft log to the actual <code>StateStore</code>. DotNext calls <code>ApplyAsync()</code> on every node after quorum commits an entry. It must be <strong>deterministic and idempotent</strong> — same input always produces the same state transition.</p>
+
+<pre><span class="lang">C# — BrokerLogEntry + BrokerStateMachine</span><span class="kw">using</span> <span class="tp">DotNext.Net.Cluster.Consensus.Raft</span>;
+<span class="kw">using</span> <span class="tp">DotNext.IO</span>;
+
+<span class="cm">// ── Log entry: what gets written into the Raft log ─────────────────────</span>
+<span class="kw">public readonly struct</span> <span class="tp">BrokerLogEntry</span> : <span class="tp">IRaftLogEntry</span>
+{
+    <span class="kw">private readonly</span> <span class="tp">ReadOnlyMemory</span>&lt;<span class="tp">byte</span>&gt; _data;   <span class="cm">// serialized StateEntry</span>
+
+    <span class="kw">public</span> <span class="tp">BrokerLogEntry</span>(<span class="tp">ReadOnlyMemory</span>&lt;<span class="tp">byte</span>&gt; data) => _data = data;
+
+    <span class="kw">public long</span>      Term      { <span class="kw">get</span>; <span class="kw">init</span>; }
+    <span class="kw">public</span> <span class="tp">DateTimeOffset</span> Timestamp => <span class="tp">DateTimeOffset</span>.UtcNow;
+    <span class="kw">public bool</span>      IsSnapshot => <span class="kw">false</span>;
+    <span class="kw">public int?</span>      CommandId  => <span class="kw">null</span>;
+
+    <span class="kw">public</span> <span class="tp">ValueTask</span> <span class="fn">WriteToAsync</span>&lt;<span class="tp">TWriter</span>&gt;(<span class="tp">TWriter</span> writer, <span class="tp">CancellationToken</span> ct)
+        <span class="kw">where</span> <span class="tp">TWriter</span> : <span class="tp">IAsyncBinaryWriter</span>
+        => writer.<span class="fn">WriteAsync</span>(_data, ct);
+}
+
+<span class="cm">// What each log entry carries</span>
+<span class="kw">public sealed record</span> <span class="tp">StateEntry</span>(
+    <span class="tp">string</span>       Topic,
+    <span class="tp">JsonElement</span>  Payload,
+    <span class="tp">StateOp</span>     Op         <span class="cm">// Set | Delete</span>
+);
+
+<span class="kw">public enum</span> <span class="tp">StateOp</span> { <span class="nm">Set</span>, <span class="nm">Delete</span> }
+
+<span class="cm">// ── The state machine — called on EVERY node after commit ───────────────</span>
+<span class="kw">public sealed class</span> <span class="tp">BrokerStateMachine</span> : <span class="tp">PersistentState</span>
+{
+    <span class="kw">private readonly</span> <span class="tp">IStateStore</span> _store;
+    <span class="kw">private readonly</span> <span class="tp">ISubscriberNotifier</span> _notifier; <span class="cm">// fan-out after apply</span>
+
+    <span class="kw">public</span> <span class="tp">BrokerStateMachine</span>(<span class="tp">string</span> dataDir, <span class="tp">IStateStore</span> store, <span class="tp">ISubscriberNotifier</span> notifier)
+        : <span class="kw">base</span>(dataDir, <span class="kw">new</span> <span class="tp">Options</span> { MaxLogEntrySize = <span class="nm">1024</span> * <span class="nm">64</span> })
+    {
+        _store    = store;
+        _notifier = notifier;
+    }
+
+    <span class="cm">// Called by DotNext after quorum commits the entry</span>
+    <span class="cm">// MUST be deterministic — no timestamps, no random values here</span>
+    <span class="kw">protected override async</span> <span class="tp">ValueTask</span> <span class="fn">ApplyAsync</span>(<span class="tp">LogEntry</span> entry)
+    {
+        <span class="kw">if</span> (entry.IsSnapshot) { <span class="kw">await</span> <span class="fn">RestoreSnapshotAsync</span>(entry); <span class="kw">return</span>; }
+
+        <span class="kw">var</span> data = <span class="kw">await</span> entry.<span class="fn">ToMemoryAsync</span>();
+        <span class="kw">var</span> op   = <span class="tp">JsonSerializer</span>.<span class="fn">Deserialize</span>(data.Span, <span class="tp">BrokerJsonContext</span>.Default.<span class="tp">StateEntry</span>)!;
+
+        <span class="kw">switch</span> (op.Op)
+        {
+            <span class="kw">case</span> <span class="tp">StateOp</span>.Set:
+                <span class="cm">// SetMemory skips WAL — Raft log is the WAL</span>
+                _store.<span class="fn">SetMemory</span>(op.Topic, op.Payload);
+                <span class="kw">break</span>;
+            <span class="kw">case</span> <span class="tp">StateOp</span>.Delete:
+                _store.<span class="fn">DeleteMemory</span>(op.Topic);
+                <span class="kw">break</span>;
+        }
+
+        <span class="cm">// Notify local subscribers AFTER state is consistent</span>
+        <span class="kw">await</span> _notifier.<span class="fn">NotifyAsync</span>(op.Topic, op.Payload, op.Op);
+    }
+
+    <span class="cm">// ── Snapshot for log compaction ───────────────────────────────────────</span>
+    <span class="kw">protected override async</span> <span class="tp">ValueTask</span> <span class="fn">CreateSnapshotAsync</span>(<span class="tp">ISnapshotWriter</span> snapshot)
+    {
+        <span class="kw">var</span> buf = <span class="kw">new</span> <span class="tp">ArrayBufferWriter</span>&lt;<span class="tp">byte</span>&gt;();
+        <span class="kw">var</span> writer = <span class="kw">new</span> <span class="tp">Utf8JsonWriter</span>(buf);
+        writer.<span class="fn">WriteStartArray</span>();
+        <span class="kw">foreach</span> (<span class="kw">var</span> (topic, payload) <span class="kw">in</span> _store.<span class="fn">GetAll</span>())  <span class="cm">// reads all 64 shards</span>
+        {
+            writer.<span class="fn">WriteStartObject</span>();
+            writer.<span class="fn">WriteString</span>(<span class="st">"topic"</span>, topic);
+            writer.<span class="fn">WritePropertyName</span>(<span class="st">"payload"</span>); payload.<span class="fn">WriteTo</span>(writer);
+            writer.<span class="fn">WriteEndObject</span>();
+        }
+        writer.<span class="fn">WriteEndArray</span>();
+        <span class="kw">await</span> writer.<span class="fn">FlushAsync</span>();
+        <span class="kw">await</span> snapshot.<span class="fn">WriteAsync</span>(buf.WrittenMemory);
+    }
+
+    <span class="kw">private async</span> <span class="tp">ValueTask</span> <span class="fn">RestoreSnapshotAsync</span>(<span class="tp">LogEntry</span> snapshot)
+    {
+        <span class="kw">var</span> data    = <span class="kw">await</span> snapshot.<span class="fn">ToMemoryAsync</span>();
+        <span class="kw">var</span> entries = <span class="tp">JsonSerializer</span>.<span class="fn">Deserialize</span>(data.Span, <span class="tp">BrokerJsonContext</span>.Default.<span class="tp">StateEntryArray</span>)!;
+        _store.<span class="fn">LoadBulk</span>(entries);   <span class="cm">// replaces all shard contents atomically</span>
+    }
+}</pre>
+
+  <div class="callout t">
+    <strong>Determinism Rule</strong>
+    <code>ApplyAsync</code> receives the same bytes on every node and must produce the same state mutation. Never use <code>DateTime.Now</code>, <code>Guid.NewGuid()</code>, or any non-deterministic source inside Apply. If timestamps are needed in the payload, they must be encoded by the publisher before entering the Raft log.
+  </div>
+</section>
+
+<!-- ── 05 SNAPSHOTS ── -->
+<section id="snapshots">
+  <div class="sec-hd"><span class="sec-num">05</span><h2>Snapshots &amp; Log Compaction</h2></div>
+
+  <p>Without snapshots, every Raft log grows forever and new nodes must replay the entire history. <code>PersistentState</code> handles compaction automatically — it calls <code>CreateSnapshotAsync</code> when the log exceeds a configurable threshold.</p>
+
+<pre><span class="lang">C# — Snapshot Lifecycle</span><span class="cm">// ── New node joins the cluster ──────────────────────────────────────────
+//
+//  Leader detects follower is far behind (commitIndex - follower.nextIndex > threshold)
+//  Leader calls CreateSnapshotAsync() → serializes full StateStore
+//  Leader sends snapshot via InstallSnapshot RPC
+//  Follower calls RestoreSnapshotAsync() → rebuilds StateStore from snapshot
+//  Follower replays only log entries AFTER snapshot's lastIncludedIndex
+//
+// DotNext handles the RPC mechanics. You only implement Create + Restore.</span>
+
+<span class="cm">// ── Manual snapshot trigger (optional, e.g. on schedule) ───────────────</span>
+<span class="kw">public sealed class</span> <span class="tp">SnapshotScheduler</span> : <span class="tp">BackgroundService</span>
+{
+    <span class="kw">private readonly</span> <span class="tp">BrokerStateMachine</span> _sm;
+    <span class="kw">private readonly</span> <span class="tp">TimeSpan</span> _interval;
+
+    <span class="kw">protected override async</span> <span class="tp">Task</span> <span class="fn">ExecuteAsync</span>(<span class="tp">CancellationToken</span> ct)
+    {
+        <span class="kw">using var</span> timer = <span class="kw">new</span> <span class="tp">PeriodicTimer</span>(_interval);
+        <span class="kw">while</span> (<span class="kw">await</span> timer.<span class="fn">WaitForNextTickAsync</span>(ct))
+        {
+            <span class="cm">// ForceCompactionAsync triggers CreateSnapshotAsync + log truncation</span>
+            <span class="kw">await</span> _sm.<span class="fn">ForceCompactionAsync</span>(<span class="nm">0L</span>, ct);  <span class="cm">// 0 = compact all committed</span>
+        }
+    }
+}</pre>
+
+  <h3>Snapshot vs WAL Interaction</h3>
+
+  <table class="cons-table">
+    <thead>
+      <tr>
+        <th>Scenario</th>
+        <th class="t">Raft Mode</th>
+        <th class="c">Single-Node Mode</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Durability mechanism</td>
+        <td>Raft PersistentState log (per node)</td>
+        <td>Custom WAL + fsync batching</td>
+      </tr>
+      <tr>
+        <td>WAL used?</td>
+        <td><span class="no">No — NullWalWriter injected</span></td>
+        <td><span class="yes">Yes — WalWriter with batched fsync</span></td>
+      </tr>
+      <tr>
+        <td>Snapshot trigger</td>
+        <td>DotNext auto-compaction or SnapshotScheduler</td>
+        <td>PeriodicTimer every 5 min</td>
+      </tr>
+      <tr>
+        <td>Restart recovery</td>
+        <td>Load Raft snapshot → replay uncommitted tail</td>
+        <td>Load custom snapshot → replay WAL segments</td>
+      </tr>
+      <tr>
+        <td>StateStore.Set() path</td>
+        <td><code>SetMemory()</code> — no disk write (Raft handles it)</td>
+        <td><code>SetAsync()</code> — WAL append + WaitFlushed</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ── 06 READS ── -->
+<section id="reads">
+  <div class="sec-hd"><span class="sec-num">06</span><h2>Read Distribution</h2></div>
+
+  <p>Writes must go to the leader. Reads have two options trading consistency for latency. Pick per request type.</p>
+
+<pre><span class="lang">C# — Read Consistency Options</span><span class="kw">public sealed class</span> <span class="tp">DistributedStateStore</span>
+{
+    <span class="kw">private readonly</span> <span class="tp">IStateStore</span>  _local;
+    <span class="kw">private readonly</span> <span class="tp">IRaftCluster</span> _raft;
+
+    <span class="cm">// ── Option A: Stale read (any node) ──────────────────────────────────
+    // Returns value from local in-memory StateStore.
+    // May be behind by up to one AppendEntries round-trip (~1-5ms on LAN).
+    // Use for: dashboards, metrics, non-critical state polling.</span>
+    <span class="kw">public</span> <span class="tp">JsonElement</span>? <span class="fn">GetStale</span>(<span class="tp">string</span> topic)
+        => _local.<span class="fn">Get</span>(topic);   <span class="cm">// purely local, no network</span>
+
+    <span class="cm">// ── Option B: Linearizable read (leader only) ─────────────────────────
+    // Calls ReadIndex: leader confirms it's still leader by checking
+    // heartbeat quorum, THEN reads local store.
+    // Guarantees read reflects all prior committed writes.
+    // Use for: new subscriber's initial desired-state push.</span>
+    <span class="kw">public async</span> <span class="tp">ValueTask</span>&lt;<span class="tp">JsonElement</span>?&gt; <span class="fn">GetLinearizableAsync</span>(
+        <span class="tp">string</span> topic, <span class="tp">CancellationToken</span> ct)
+    {
+        <span class="cm">// ReadIndex ensures leader hasn't been superseded since last heartbeat</span>
+        <span class="kw">await</span> _raft.<span class="fn">ReadIndexAsync</span>(ct);         <span class="cm">// ~0.5 RTT cost</span>
+        <span class="kw">return</span> _local.<span class="fn">Get</span>(topic);              <span class="cm">// now safe to read locally</span>
+    }
+
+    <span class="cm">// ── Which to use for new SUBSCRIBE ───────────────────────────────────
+    // A new subscriber needs the current desired state pushed at QoS 1.
+    // Use linearizable read so they don't get a stale payload that
+    // was already superseded by a committed write on another node.</span>
+    <span class="kw">public async</span> <span class="tp">ValueTask</span>&lt;<span class="tp">IReadOnlyList</span>&lt;<span class="tp">RetainedEntry</span>&gt;&gt; <span class="fn">GetRetainedForSubscribeAsync</span>(
+        <span class="tp">string</span> pattern, <span class="tp">CancellationToken</span> ct)
+    {
+        <span class="kw">await</span> _raft.<span class="fn">ReadIndexAsync</span>(ct);   <span class="cm">// linearize before reading</span>
+        <span class="kw">return</span> _local.<span class="fn">GetMatching</span>(pattern);
+    }
+}</pre>
+
+  <div class="callout a">
+    <strong>Follower Reads Without ReadIndex</strong>
+    If a follower serves a new subscriber's retained state without a ReadIndex check, the subscriber might receive a stale payload — one that a committed Raft write has already superseded on the leader. For this reason, <strong>new subscriber retained-state pushes always use linearizable reads</strong>, even if the follower adds a small latency cost. Ongoing QoS 1 delivery after that initial push can be stale-safe since the subscriber will naturally converge.
+  </div>
+</section>
+
+<!-- ── 07 CONSENSUS LAYER + FULL CODE ── -->
+<section id="code">
+  <div class="sec-hd"><span class="sec-num">07</span><h2>RaftConsensusLayer — Full Implementation</h2></div>
+
+<pre><span class="lang">C# — RaftConsensusLayer wrapping DotNext</span><span class="kw">public sealed class</span> <span class="tp">RaftConsensusLayer</span> : <span class="tp">IConsensusLayer</span>
+{
+    <span class="kw">private readonly</span> <span class="tp">IRaftCluster</span>         _cluster;
+    <span class="kw">private readonly</span> <span class="tp">BrokerStateMachine</span>   _sm;
+
+    <span class="kw">public bool</span> IsLeader => _cluster.LeadershipToken.IsCancellationRequested == <span class="kw">false</span>
+                         && _cluster.Leader?.Endpoint.<span class="fn">Equals</span>(_cluster.LocalMemberAddress) == <span class="kw">true</span>;
+
+    <span class="kw">public async</span> <span class="tp">ValueTask</span> <span class="fn">ProposeAsync</span>(<span class="tp">ReadOnlyMemory</span>&lt;<span class="tp">byte</span>&gt; data, <span class="tp">CancellationToken</span> ct)
+    {
+        <span class="kw">if</span> (!IsLeader)
+            <span class="kw">throw new</span> <span class="tp">NotLeaderException</span>(_cluster.Leader?.Endpoint);
+
+        <span class="kw">var</span> entry = <span class="kw">new</span> <span class="tp">BrokerLogEntry</span>(data) { Term = _cluster.Term };
+        <span class="kw">await</span> _cluster.<span class="fn">ReplicateAsync</span>(entry, ct);
+        <span class="cm">// Returns only after quorum. ApplyAsync called on all nodes next.</span>
+    }
+}
+
+<span class="cm">// ── Broker publish handler with Raft ────────────────────────────────────</span>
+<span class="kw">public async</span> <span class="tp">ValueTask</span> <span class="fn">HandlePublishAsync</span>(<span class="tp">Frame</span> frame, <span class="tp">string</span> senderClientId, <span class="tp">CancellationToken</span> ct)
+{
+    <span class="cm">// QoS 0 command: bypass Raft entirely</span>
+    <span class="kw">if</span> (frame.Qos == <span class="nm">0</span>)
+    {
+        <span class="kw">var</span> targets = _trie.<span class="fn">Match</span>(frame.Topic!);
+        <span class="kw">foreach</span> (<span class="kw">var</span> id <span class="kw">in</span> targets) _sessions.<span class="fn">TrySend</span>(id, frame);
+        <span class="kw">return</span>;
+    }
+
+    <span class="cm">// Non-leader: send redirect, do not buffer</span>
+    <span class="kw">if</span> (!_consensus.IsLeader)
+    {
+        <span class="kw">var</span> redirect = <span class="kw">new</span> <span class="tp">Frame</span>(<span class="st">"REDIRECT"</span>,
+            Payload: <span class="tp">JsonSerializer</span>.<span class="fn">SerializeToElement</span>(
+                <span class="kw">new</span> { leader = _consensus.<span class="fn">GetLeaderEndpoint</span>() },
+                <span class="tp">BrokerJsonContext</span>.Default.<span class="tp">LeaderInfo</span>));
+        _sessions.<span class="fn">TrySend</span>(senderClientId, redirect);
+        <span class="kw">return</span>;
+    }
+
+    <span class="cm">// Leader: propose to Raft</span>
+    <span class="kw">if</span> (frame.Retain)
+    {
+        <span class="kw">var</span> entry = <span class="kw">new</span> <span class="tp">StateEntry</span>(frame.Topic!, frame.Payload, <span class="tp">StateOp</span>.Set);
+        <span class="kw">var</span> data  = <span class="tp">JsonSerializer</span>.<span class="fn">SerializeToUtf8Bytes</span>(entry, <span class="tp">BrokerJsonContext</span>.Default.<span class="tp">StateEntry</span>);
+        <span class="kw">await</span> _consensus.<span class="fn">ProposeAsync</span>(data, ct);
+        <span class="cm">// ApplyAsync fires on all nodes → StateStore updated → NotifyAsync fans out</span>
+    }
+    <span class="kw">else</span>
+    {
+        <span class="cm">// Non-retained QoS 1: skip Raft, fan out directly with outbox</span>
+        <span class="kw">var</span> targets = _trie.<span class="fn">Match</span>(frame.Topic!);
+        <span class="kw">foreach</span> (<span class="kw">var</span> id <span class="kw">in</span> targets) <span class="kw">await</span> _qos.<span class="fn">EnqueueAsync</span>(id, frame, ct);
+    }
+
+    <span class="cm">// PUBACK to publisher (after Raft commit)</span>
+    _sessions.<span class="fn">TrySend</span>(senderClientId, <span class="kw">new</span> <span class="tp">Frame</span>(<span class="st">"ACK"</span>, MsgId: frame.MsgId));
+}</pre>
+
+  <h3>DI Registration — Wiring It Together</h3>
+
+<pre><span class="lang">C# — Program.cs / Composition Root</span><span class="kw">var</span> cfg = <span class="tp">BrokerConfig</span>.<span class="fn">Load</span>(<span class="st">"appsettings.json"</span>);
+
+<span class="cm">// Core components (always present)</span>
+<span class="kw">var</span> store    = <span class="kw">new</span> <span class="tp">ShardedStateStore</span>(cfg.Store.Shards);
+<span class="kw">var</span> sessions = <span class="kw">new</span> <span class="tp">SessionManager</span>(cfg.Session.SendBufferDepth);
+<span class="kw">var</span> qos      = <span class="kw">new</span> <span class="tp">QosEngine</span>(cfg.Qos, sessions);
+<span class="kw">var</span> trie     = <span class="kw">new</span> <span class="tp">TopicTrie</span>();
+<span class="kw">var</span> notifier = <span class="kw">new</span> <span class="tp">SubscriberNotifier</span>(trie, sessions, qos);
+
+<span class="kw">IConsensusLayer</span> consensus;
+<span class="kw">IWalWriter</span>      wal;
+
+<span class="kw">if</span> (cfg.Cluster.Mode == <span class="st">"raft"</span>)
+{
+    <span class="cm">// Raft mode: stateMachine is both the WAL and the apply gate</span>
+    <span class="kw">var</span> sm = <span class="kw">new</span> <span class="tp">BrokerStateMachine</span>(cfg.Store.WalDir, store, notifier);
+
+    <span class="kw">var</span> raftCluster = <span class="kw">await</span> <span class="tp">RaftCluster</span>.<span class="fn">CreateAsync</span>(<span class="kw">new</span> <span class="tp">RaftCluster</span>.<span class="tp">NodeConfiguration</span>
+    {
+        PublicEndPoint   = cfg.Cluster.LocalEndpoint,
+        Members          = cfg.Cluster.Peers.<span class="fn">Select</span>(<span class="tp">IPEndPoint</span>.Parse).<span class="fn">ToArray</span>(),
+        ElectionTimeout  = cfg.Cluster.RaftElectionTimeout,
+        HeartbeatThreshold = <span class="nm">2</span>,
+    }, sm);
+
+    <span class="kw">await</span> raftCluster.<span class="fn">StartAsync</span>();
+    consensus = <span class="kw">new</span> <span class="tp">RaftConsensusLayer</span>(raftCluster, sm);
+    wal       = <span class="kw">new</span> <span class="tp">NullWalWriter</span>();     <span class="cm">// Raft IS the WAL</span>
+}
+<span class="kw">else</span>
+{
+    <span class="cm">// Single-node mode: custom WAL, passthrough consensus</span>
+    wal       = <span class="kw">new</span> <span class="tp">WalWriter</span>(cfg.Store.WalDir);
+    consensus = <span class="kw">new</span> <span class="tp">NoopConsensus</span>();
+}
+
+<span class="cm">// Inject WAL into store (Raft mode: NullWal; single: real WAL)</span>
+store.<span class="fn">ConfigureWal</span>(wal);
+
+<span class="kw">var</span> broker = <span class="kw">new</span> <span class="tp">Broker</span>(store, sessions, qos, trie, notifier, consensus, wal);
+<span class="kw">await</span> broker.<span class="fn">RunAsync</span>(cfg);</pre>
+</section>
+
+<!-- ── 08 CONFIG ── -->
+<section id="config">
+  <div class="sec-hd"><span class="sec-num">08</span><h2>Raft Configuration</h2></div>
+
+<pre><span class="lang">JSON — appsettings.json (Raft mode)</span>{
+  <span class="st">"addr"</span>: <span class="st">":8080"</span>,
+  <span class="st">"store"</span>: {
+    <span class="st">"mode"</span>:   <span class="st">"raft"</span>,           <span class="cm">// enables RaftConsensusLayer, injects NullWalWriter</span>
+    <span class="st">"walDir"</span>: <span class="st">"./data/raft"</span>   <span class="cm">// DotNext PersistentState directory</span>
+  },
+  <span class="st">"cluster"</span>: {
+    <span class="st">"mode"</span>:                <span class="st">"raft"</span>,
+    <span class="st">"localEndpoint"</span>:       <span class="st">"10.0.0.1:9000"</span>,   <span class="cm">// Raft RPC endpoint (separate from WS port)</span>
+    <span class="st">"peers"</span>: [
+      <span class="st">"10.0.0.2:9000"</span>,
+      <span class="st">"10.0.0.3:9000"</span>
+    ],
+    <span class="st">"raftElectionTimeout"</span>: <span class="st">"00:00:00.150"</span>,     <span class="cm">// 150ms — must be >> network RTT</span>
+    <span class="st">"heartbeatThreshold"</span>:  <span class="nm">2</span>,
+    <span class="st">"snapshotThreshold"</span>:   <span class="nm">10000</span>,              <span class="cm">// compact after N log entries</span>
+    <span class="st">"snapshotInterval"</span>:    <span class="st">"00:10:00"</span>          <span class="cm">// or every 10 min, whichever first</span>
+  }
+}</pre>
+
+  <h3>Key Rules — What Must Never Happen</h3>
+
+  <table class="cons-table">
+    <thead>
+      <tr><th>Rule</th><th class="t">Why</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Never call StateStore.SetAsync() directly from publish handler in Raft mode</td>
+        <td>State must only change inside ApplyAsync. Direct writes bypass quorum ordering and create split-brain.</td>
+      </tr>
+      <tr>
+        <td>Never await inside ApplyAsync across unrelated state</td>
+        <td>DotNext calls Apply sequentially. Async awaits that depend on other state can deadlock the apply pipeline.</td>
+      </tr>
+      <tr>
+        <td>Never use WalWriter when Raft is enabled</td>
+        <td>Double durability — Raft's PersistentState already provides the WAL. Using both wastes IOPS and can diverge.</td>
+      </tr>
+      <tr>
+        <td>Never serve linearizable reads from a follower without ReadIndex</td>
+        <td>A stale follower may return a payload that the leader already superseded via a committed write.</td>
+      </tr>
+      <tr>
+        <td>Never route QoS 0 commands through Raft</td>
+        <td>Fire-and-forget by definition. Adding Raft overhead would change QoS 0 semantics and add unnecessary latency.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Summary — The Clean Mental Model</strong>
+    Think of the Raft log as a shared, ordered journal that every node subscribes to. A publisher writes a <em>state mutation intent</em> into the journal. Once 2 of 3 nodes have written it to their disk, it's committed. Then every node's state machine reads it from the journal and applies it. The StateStore is simply the materialized view of that journal — rebuilt from the latest snapshot plus all committed entries after it. QoS delivery (outbox, retries, reconnect replay) is the <em>delivery mechanism on top of</em> that consistent store, and it stays local per-node.
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <span>.NET Raft Consensus · Distributed Message Store Design · DotNext.Net.Cluster</span>
+  <span>BrokerStateMachine · PersistentState · IRaftCluster.ReplicateAsync · ReadIndex</span>
+</footer>
+
+</body>
+</html>
