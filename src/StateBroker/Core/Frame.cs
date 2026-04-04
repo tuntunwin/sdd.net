@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace StateBroker.Core;
 
@@ -12,6 +13,7 @@ public sealed record Frame(
     string?     MsgId    = null,
     bool        Retain   = false,
     bool        Retained = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     JsonElement Payload  = default
 )
 {
