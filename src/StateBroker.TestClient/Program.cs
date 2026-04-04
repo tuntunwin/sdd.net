@@ -16,7 +16,8 @@ switch (mode)
         await RunSubscriber(broker, topic, skip: skip);
         break;
     case "pub":
-        await RunPublisher(broker, topic);
+        var retain = !(args.Length > 2 && args[2].Equals("false", StringComparison.OrdinalIgnoreCase));
+        await RunPublisher(broker, topic, retain);
         break;
     case "both":
         await RunBoth(broker, topic);
@@ -27,12 +28,14 @@ switch (mode)
         Console.WriteLine("Modes:");
         Console.WriteLine("  sub            — subscribe and ACK every message");
         Console.WriteLine("  sub-noack      — skip ACK, then ACK after [skip] retries (0 = never ACK)");
-        Console.WriteLine("  pub            — publish messages from stdin");
+        Console.WriteLine("  pub            — publish messages from stdin (retain=true by default)");
         Console.WriteLine("  both           — demo: pub/sub with retained state");
         Console.WriteLine();
         Console.WriteLine("Examples:");
-        Console.WriteLine("  dotnet run -- sub-noack \"sensors/#\"      # never ACK");
-        Console.WriteLine("  dotnet run -- sub-noack \"sensors/#\" 3    # ACK after skipping 3");
+        Console.WriteLine("  dotnet run -- sub-noack \"sensors/#\"        # never ACK");
+        Console.WriteLine("  dotnet run -- sub-noack \"sensors/#\" 3      # ACK after skipping 3");
+        Console.WriteLine("  dotnet run -- pub \"sensors/temp\"            # publish retained");
+        Console.WriteLine("  dotnet run -- pub \"sensors/temp\" false      # publish non-retained");
         break;
 }
 
@@ -131,11 +134,11 @@ static async Task RunSubscriber(string broker, string topic, int skip)
 
 // ── Publisher ────────────────────────────────────────────────────
 
-static async Task RunPublisher(string broker, string topic)
+static async Task RunPublisher(string broker, string topic, bool retain)
 {
     using var ws = await ConnectAsync(broker, "publisher-1");
     Console.WriteLine($"[pub] Connected as publisher-1");
-    Console.WriteLine($"[pub] Publishing to: {topic}");
+    Console.WriteLine($"[pub] Publishing to: {topic} (retain={retain})");
     Console.WriteLine("[pub] Type a message and press Enter (empty line to quit):\n");
 
     while (true)
@@ -156,7 +159,7 @@ static async Task RunPublisher(string broker, string topic)
         }
 
         await SendAsync(ws, new Frame(
-            Frame.Types.Publish, topic, Qos: 1, Retain: true, Payload: payload));
+            Frame.Types.Publish, topic, Qos: 1, Retain: retain, Payload: payload));
         Console.WriteLine($"[pub] Published to {topic}: {payload}");
     }
 
