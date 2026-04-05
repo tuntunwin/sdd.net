@@ -12,46 +12,66 @@ var config = File.Exists(configPath)
 var port = config.Addr.TrimStart(':');
 var prefix = $"http://localhost:{port}/";
 
-// Resolve storage mode
+// Shared components
+using var store = new ShardedStateStore(config.Store?.Shards ?? 64);
+var sessions = new SessionManager(config.Session?.SendBufferDepth ?? 256);
+using var router = new TopicRouter();
+var qos = new QosEngine(config.Qos?.RetryBase, config.Qos?.RetryMax);
+
 IWalWriter wal;
+IConsensusLayer consensus;
 Task? flushTask = null;
-if (config.Store?.Mode == "wal")
+
+#if ENABLE_RAFT
+if (config.Cluster?.Mode == "raft")
 {
-    var walWriter = new WalWriter(
-        config.Store.WalDir,
-        config.Store.SegmentMb,
-        config.Store.FsyncIntervalMs);
-    wal = walWriter;
-    // Flush loop started after broker setup
-    flushTask = Task.CompletedTask; // placeholder, started below
+    // Raft mode: Raft log IS the WAL — inject NullWalWriter
+    wal = new NullWalWriter();
+    store.ConfigureWal(wal);
+
+    var notifier = new StateBroker.Raft.SubscriberNotifier(router, sessions);
+    var (raftConsensus, stateMachine) = await StateBroker.Raft.RaftBootstrap.CreateAsync(
+        config.Cluster, store, notifier);
+    consensus = raftConsensus;
+
+    Console.WriteLine($"StateBroker [Raft] listening on {prefix}");
+    Console.WriteLine($"  local={config.Cluster.LocalEndpoint}  peers={string.Join(",", config.Cluster.Peers ?? [])}");
 }
 else
+#endif
 {
-    wal = new NullWalWriter();
-}
-
-var consensus = new NoopConsensus();
-using var store = new ShardedStateStore(
-    config.Store?.Shards ?? 64, wal);
-
-// Replay WAL into StateStore on startup
-await foreach (var entry in wal.ReplayAsync(CancellationToken.None))
-{
-    if (entry.Delete)
-        store.DeleteMemory(entry.Topic);
+    // Single-node mode
+    if (config.Store?.Mode == "wal")
+    {
+        var walWriter = new WalWriter(
+            config.Store.WalDir,
+            config.Store.SegmentMb,
+            config.Store.FsyncIntervalMs);
+        wal = walWriter;
+        flushTask = Task.CompletedTask; // placeholder, started below
+    }
     else
-        store.SetMemory(entry.Topic, entry.Payload);
-}
+    {
+        wal = new NullWalWriter();
+    }
 
-var sessions = new SessionManager(
-    config.Session?.SendBufferDepth ?? 256);
-using var router = new TopicRouter();
-var qos = new QosEngine(
-    config.Qos?.RetryBase,
-    config.Qos?.RetryMax);
+    store.ConfigureWal(wal);
+    consensus = new NoopConsensus();
+
+    // Replay WAL into StateStore on startup
+    await foreach (var entry in wal.ReplayAsync(CancellationToken.None))
+    {
+        if (entry.Delete)
+            store.DeleteMemory(entry.Topic);
+        else
+            store.SetMemory(entry.Topic, entry.Payload);
+    }
+
+    Console.WriteLine($"StateBroker listening on {prefix}");
+    Console.WriteLine($"  store.mode={config.Store?.Mode ?? "noop"}  cluster.mode=single");
+}
 
 await using var transport = new WebSocketTransport(prefix);
-
 var broker = new Broker(transport, store, consensus, sessions, router, qos);
 
 using var cts = new CancellationTokenSource();
@@ -61,8 +81,6 @@ Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 if (wal is WalWriter walWriter2)
     flushTask = walWriter2.FlushLoopAsync(cts.Token);
 
-Console.WriteLine($"StateBroker listening on {prefix}");
-Console.WriteLine($"  store.mode={config.Store?.Mode ?? "noop"}  cluster.mode={config.Cluster?.Mode ?? "single"}");
 Console.WriteLine("  Press Ctrl+C to stop.");
 
 try

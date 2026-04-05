@@ -60,8 +60,15 @@ public sealed record ClusterConfig(
     string   Mode                = "single",
     string[] Peers               = default!,
     string?  LocalEndpoint       = null,
-    TimeSpan RaftElectionTimeout = default
+    TimeSpan RaftElectionTimeout = default,
+    string?  RaftLogDir          = null,
+    int      HeartbeatThreshold  = 2,
+    int      SnapshotThreshold   = 10000,
+    TimeSpan SnapshotInterval    = default
 )
 {
     public ClusterConfig() : this(Mode: "single") { }
+
+    public TimeSpan EffectiveSnapshotInterval =>
+        SnapshotInterval == default ? TimeSpan.FromMinutes(10) : SnapshotInterval;
 }

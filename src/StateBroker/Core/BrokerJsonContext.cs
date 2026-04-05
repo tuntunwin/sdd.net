@@ -13,6 +13,7 @@ namespace StateBroker.Core;
 [JsonSerializable(typeof(SessionConfig))]
 [JsonSerializable(typeof(ClusterConfig))]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(LeaderRedirect))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

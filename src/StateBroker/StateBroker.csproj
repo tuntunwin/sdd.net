@@ -18,6 +18,10 @@
     <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <PropertyGroup Condition="'$(EnableRaft)' == 'true'">
+    <DefineConstants>$(DefineConstants);ENABLE_RAFT</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(EnableRaft)' == 'true'">
     <PackageReference Include="DotNext.Net.Cluster" Version="5.*" />
   </ItemGroup>

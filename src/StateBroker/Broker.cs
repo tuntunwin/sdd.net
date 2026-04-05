@@ -107,18 +107,42 @@ public sealed class Broker
 
     private async ValueTask HandlePublishAsync(Frame frame, Session session, CancellationToken ct)
     {
+        var isRetainedDelete = frame.Retain
+            && (frame.Payload.ValueKind == JsonValueKind.Undefined
+                || (frame.Payload.ValueKind == JsonValueKind.String
+                    && frame.Payload.GetString()?.Length == 0));
+
+        // ── Retained state mutation ──
         if (frame.Retain)
         {
-            // Empty payload = delete retained state (MQTT convention)
-            if (frame.Payload.ValueKind == JsonValueKind.Undefined
-                || (frame.Payload.ValueKind == JsonValueKind.String
-                    && frame.Payload.GetString()?.Length == 0))
+            if (_consensus.RequiresProposal)
             {
-                await _store.DeleteAsync(frame.Topic!, ct);
+                // Raft mode: retained writes must go through consensus
+                if (!_consensus.IsLeader)
+                {
+                    // Redirect to leader — no PUBACK, client reconnects
+                    var redirect = new LeaderRedirect(_consensus.LeaderEndpoint);
+                    session.TrySend(new Frame(Frame.Types.Redirect,
+                        Payload: JsonSerializer.SerializeToElement(
+                            redirect, BrokerJsonContext.Default.LeaderRedirect)));
+                    return;
+                }
+
+                // Leader: propose through Raft → ApplyAsync calls SetMemory on all nodes
+                var op = isRetainedDelete ? StateOp.Delete : StateOp.Set;
+                var entry = new StateEntry(frame.Topic!, frame.Payload, op);
+                var data = JsonSerializer.SerializeToUtf8Bytes(
+                    entry, BrokerJsonContext.Default.StateEntry);
+                await _consensus.ProposeAsync(data, ct);
+                // After ProposeAsync returns, quorum committed and ApplyAsync ran
             }
             else
             {
-                await _store.SetAsync(frame.Topic!, frame.Payload, ct);
+                // Single-node mode: write directly via WAL
+                if (isRetainedDelete)
+                    await _store.DeleteAsync(frame.Topic!, ct);
+                else
+                    await _store.SetAsync(frame.Topic!, frame.Payload, ct);
             }
         }
 
@@ -126,7 +150,7 @@ public sealed class Broker
         if (frame.Qos >= 1 && frame.MsgId is not null)
             session.TrySend(new Frame(Frame.Types.Ack, MsgId: frame.MsgId));
 
-        // Fan-out to matching subscribers
+        // Fan-out to matching subscribers (local to this node)
         var targets = _router.Match(frame.Topic!);
         foreach (var clientId in targets)
         {
