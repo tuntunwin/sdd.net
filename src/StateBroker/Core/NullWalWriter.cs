@@ -10,6 +10,9 @@ public sealed class NullWalWriter : IWalWriter
     public ValueTask<long> AppendAsync(string topic, JsonElement payload, CancellationToken ct) =>
         ValueTask.FromResult(Interlocked.Increment(ref _seq));
 
+    public ValueTask<long> AppendDeleteAsync(string topic, CancellationToken ct) =>
+        ValueTask.FromResult(Interlocked.Increment(ref _seq));
+
     public ValueTask WaitFlushedAsync(long seq, CancellationToken ct) =>
         ValueTask.CompletedTask;
 

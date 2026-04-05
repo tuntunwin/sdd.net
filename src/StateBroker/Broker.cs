@@ -1,3 +1,4 @@
+using System.Text.Json;
 using StateBroker.Core;
 
 namespace StateBroker;
@@ -46,8 +47,6 @@ public sealed class Broker
         using var connCts = CancellationTokenSource.CreateLinkedTokenSource(ct, session.CancellationToken);
         var lct = connCts.Token;
 
-        // Start retry loop — re-sends un-ACKed QoS 1 frames with backoff.
-        // Cancels when this connection ends.
         var retryTask = _qos.StartRetryLoopAsync(conn.ClientId, _sessions, lct);
 
         var writeTask = WriteLoopAsync(conn, session, lct);
@@ -109,8 +108,25 @@ public sealed class Broker
     private async ValueTask HandlePublishAsync(Frame frame, Session session, CancellationToken ct)
     {
         if (frame.Retain)
-            await _store.SetAsync(frame.Topic!, frame.Payload, ct);
+        {
+            // Empty payload = delete retained state (MQTT convention)
+            if (frame.Payload.ValueKind == JsonValueKind.Undefined
+                || (frame.Payload.ValueKind == JsonValueKind.String
+                    && frame.Payload.GetString()?.Length == 0))
+            {
+                await _store.DeleteAsync(frame.Topic!, ct);
+            }
+            else
+            {
+                await _store.SetAsync(frame.Topic!, frame.Payload, ct);
+            }
+        }
 
+        // PUBACK — confirm receipt of QoS 1 publish to the publisher
+        if (frame.Qos >= 1 && frame.MsgId is not null)
+            session.TrySend(new Frame(Frame.Types.Ack, MsgId: frame.MsgId));
+
+        // Fan-out to matching subscribers
         var targets = _router.Match(frame.Topic!);
         foreach (var clientId in targets)
         {
@@ -132,10 +148,11 @@ public sealed class Broker
     {
         _router.Subscribe(session.ClientId, frame.Topic!);
 
+        // SUBACK — confirm subscription accepted
+        session.TrySend(new Frame(Frame.Types.SubAck, Topic: frame.Topic));
+
         // Push retained state matching the subscription pattern via QoS 1.
-        // EnqueueAsync replaces any stale outbox entry for the same topic
-        // (dictionary keyed by topic, latest-value-wins). Retry loop will
-        // re-send until the client ACKs — same as MQTT retained delivery.
+        // EnqueueAsync replaces any stale outbox entry for the same topic.
         foreach (var (topic, payload) in _store.GetAll())
         {
             if (!TopicRouter.Matches(topic, frame.Topic!))

@@ -6,6 +6,8 @@ public interface IWalWriter : IAsyncDisposable
 {
     ValueTask<long> AppendAsync(string topic, JsonElement payload, CancellationToken ct);
 
+    ValueTask<long> AppendDeleteAsync(string topic, CancellationToken ct);
+
     ValueTask WaitFlushedAsync(long seq, CancellationToken ct);
 
     IAsyncEnumerable<WalEntry> ReplayAsync(CancellationToken ct);

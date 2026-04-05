@@ -64,6 +64,35 @@ public sealed class WalWriter : IWalWriter
         return seq;
     }
 
+    public async ValueTask<long> AppendDeleteAsync(string topic, CancellationToken ct)
+    {
+        var seq = Interlocked.Increment(ref _seq);
+
+        var buf = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buf))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("seq", seq);
+            writer.WriteString("topic", topic);
+            writer.WriteBoolean("delete", true);
+            writer.WriteEndObject();
+        }
+        buf.Write("\n"u8);
+
+        await _appendLock.WaitAsync(ct);
+        try
+        {
+            await _file.WriteAsync(buf.WrittenMemory, ct);
+            Volatile.Write(ref _writtenSeq, seq);
+        }
+        finally
+        {
+            _appendLock.Release();
+        }
+
+        return seq;
+    }
+
     public ValueTask WaitFlushedAsync(long seq, CancellationToken ct)
     {
         if (Volatile.Read(ref _flushedSeq) >= seq)

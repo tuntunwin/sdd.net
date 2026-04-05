@@ -73,13 +73,32 @@ public class FrameTests
         Assert.Equal("PING", Frame.Types.Ping);
         Assert.Equal("PONG", Frame.Types.Pong);
         Assert.Equal("REDIRECT", Frame.Types.Redirect);
+        Assert.Equal("SUBACK", Frame.Types.SubAck);
+    }
+
+    [Fact]
+    public void Dup_defaults_to_false()
+    {
+        var frame = new Frame(Frame.Types.Deliver);
+        Assert.False(frame.Dup);
+    }
+
+    [Fact]
+    public void Dup_with_expression()
+    {
+        var frame = new Frame(Frame.Types.Deliver, "t", MsgId: "m1");
+        var retry = frame with { Dup = true };
+
+        Assert.False(frame.Dup);
+        Assert.True(retry.Dup);
+        Assert.Equal(frame.MsgId, retry.MsgId);
     }
 
     [Fact]
     public void Json_round_trip_via_source_generator()
     {
         var payload = JsonDocument.Parse("""{"v":1}""").RootElement;
-        var frame = new Frame(Frame.Types.Publish, "t/1", 1, "m1", true, false, payload);
+        var frame = new Frame(Frame.Types.Publish, "t/1", 1, "m1", true, false, Payload: payload);
 
         var bytes = JsonSerializer.SerializeToUtf8Bytes(frame, BrokerJsonContext.Default.Frame);
         var back = JsonSerializer.Deserialize(bytes, BrokerJsonContext.Default.Frame)!;

@@ -7,6 +7,12 @@ public interface IStateStore
     ValueTask SetAsync(string topic, JsonElement payload, CancellationToken ct);
 
     /// <summary>
+    /// Delete retained state via WAL then memory. Used for retained delete
+    /// (publish empty payload to a retained topic).
+    /// </summary>
+    ValueTask DeleteAsync(string topic, CancellationToken ct);
+
+    /// <summary>
     /// In-memory-only set, bypassing WAL. Used by Raft ApplyAsync.
     /// </summary>
     void SetMemory(string topic, JsonElement payload);

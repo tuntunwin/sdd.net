@@ -36,7 +36,12 @@ using var store = new ShardedStateStore(
 
 // Replay WAL into StateStore on startup
 await foreach (var entry in wal.ReplayAsync(CancellationToken.None))
-    store.SetMemory(entry.Topic, entry.Payload);
+{
+    if (entry.Delete)
+        store.DeleteMemory(entry.Topic);
+    else
+        store.SetMemory(entry.Topic, entry.Payload);
+}
 
 var sessions = new SessionManager(
     config.Session?.SendBufferDepth ?? 256);

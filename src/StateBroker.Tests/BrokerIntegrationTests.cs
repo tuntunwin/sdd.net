@@ -96,6 +96,14 @@ public class BrokerIntegrationTests : IAsyncLifetime
         return frames;
     }
 
+    /// <summary>Send SUBSCRIBE and drain the SUBACK response.</summary>
+    private static async Task SubscribeAsync(ClientWebSocket ws, string topic)
+    {
+        await SendFrameAsync(ws, new Frame(Frame.Types.Subscribe, topic));
+        var suback = await ReceiveFrameAsync(ws);
+        Assert.Equal(Frame.Types.SubAck, suback!.Type);
+    }
+
     // ── Connection ──
 
     [Fact]
@@ -227,7 +235,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var pub = await ConnectAsync("pub-1");
 
         // Subscribe
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "events/+"));
+        await SubscribeAsync(sub, "events/+");
         await Task.Delay(100);
 
         // Publish (QoS 0)
@@ -256,7 +264,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
 
         // New subscriber should receive retained state on subscribe
         using var sub = await ConnectAsync("sub-retain");
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "state/#"));
+        await SubscribeAsync(sub, "state/#");
 
         var deliver = await ReceiveFrameAsync(sub);
         Assert.NotNull(deliver);
@@ -284,7 +292,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-qos1");
         using var pub = await ConnectAsync("pub-qos1");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "qos/test"));
+        await SubscribeAsync(sub, "qos/test");
         await Task.Delay(100);
 
         // Publish QoS 1
@@ -311,7 +319,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-ack");
         using var pub = await ConnectAsync("pub-ack");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "ack/test"));
+        await SubscribeAsync(sub, "ack/test");
         await Task.Delay(100);
 
         var payload = JsonDocument.Parse("1").RootElement;
@@ -337,8 +345,8 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub2 = await ConnectAsync("multi-sub-2");
         using var pub = await ConnectAsync("multi-pub");
 
-        await SendFrameAsync(sub1, new Frame(Frame.Types.Subscribe, "fan/out"));
-        await SendFrameAsync(sub2, new Frame(Frame.Types.Subscribe, "fan/out"));
+        await SubscribeAsync(sub1, "fan/out");
+        await SubscribeAsync(sub2, "fan/out");
         await Task.Delay(100);
 
         var payload = JsonDocument.Parse("""{"msg":"hello"}""").RootElement;
@@ -360,7 +368,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("wild-sub");
         using var pub = await ConnectAsync("wild-pub");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "sensors/#"));
+        await SubscribeAsync(sub, "sensors/#");
         await Task.Delay(100);
 
         var payload = JsonDocument.Parse("25").RootElement;
@@ -380,7 +388,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-retry");
         using var pub = await ConnectAsync("pub-retry");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "retry/test"));
+        await SubscribeAsync(sub, "retry/test");
         await Task.Delay(100);
 
         // Publish QoS 1
@@ -418,7 +426,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
 
         // First connection — subscribe, receive retained (now QoS 1)
         var ws1 = await ConnectAsync("sub-recon");
-        await SendFrameAsync(ws1, new Frame(Frame.Types.Subscribe, "recon/#"));
+        await SubscribeAsync(ws1, "recon/#");
         var d1 = await ReceiveFrameAsync(ws1);
         Assert.NotNull(d1);
         Assert.True(d1!.Retained);
@@ -432,7 +440,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         // Second connection — same clientId, resubscribe
         // EnqueueAsync replaces the stale outbox entry with a fresh retained push
         using var ws2 = await ConnectAsync("sub-recon");
-        await SendFrameAsync(ws2, new Frame(Frame.Types.Subscribe, "recon/#"));
+        await SubscribeAsync(ws2, "recon/#");
 
         // Should receive exactly ONE retained delivery (new MsgId from fresh push)
         var d2 = await ReceiveFrameAsync(ws2);
@@ -465,7 +473,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-replace");
         using var pub = await ConnectAsync("pub-replace");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "state/val"));
+        await SubscribeAsync(sub, "state/val");
         await Task.Delay(100);
 
         // Publish 222 then 333 to same topic — don't ACK either
@@ -495,7 +503,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-latest");
         using var pub = await ConnectAsync("pub-latest");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "latest/test"));
+        await SubscribeAsync(sub, "latest/test");
         await Task.Delay(100);
 
         // Publish two values to same topic without ACKing
@@ -522,7 +530,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-stale");
         using var pub = await ConnectAsync("pub-stale");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "stale/test"));
+        await SubscribeAsync(sub, "stale/test");
         await Task.Delay(100);
 
         // Publish v1
@@ -557,7 +565,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-multi-topic");
         using var pub = await ConnectAsync("pub-multi-topic");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "mt/#"));
+        await SubscribeAsync(sub, "mt/#");
         await Task.Delay(100);
 
         // Publish to two different topics
@@ -592,7 +600,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-late-ack");
         using var pub = await ConnectAsync("pub-late-ack");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "late/ack"));
+        await SubscribeAsync(sub, "late/ack");
         await Task.Delay(100);
 
         // Publish QoS 1 — don't ACK
@@ -643,7 +651,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-skip2");
         using var pub = await ConnectAsync("pub-skip2");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "skip/test"));
+        await SubscribeAsync(sub, "skip/test");
         await Task.Delay(100);
 
         await SendFrameAsync(pub, new Frame(
@@ -685,7 +693,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-skip-reset");
         using var pub = await ConnectAsync("pub-skip-reset");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "reset/val"));
+        await SubscribeAsync(sub, "reset/val");
         await Task.Delay(100);
 
         // Publish v1, skip its retries
@@ -731,7 +739,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         using var sub = await ConnectAsync("sub-stale-retry");
         using var pub = await ConnectAsync("pub-stale-retry");
 
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "stale/retry"));
+        await SubscribeAsync(sub, "stale/retry");
         await Task.Delay(100);
 
         // Publish v1
@@ -772,7 +780,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
         // First connection — subscribe FIRST, then publish QoS 1 retained
         // so the publish fans out through the router into the outbox
         var ws1 = await ConnectAsync("sub-nodup");
-        await SendFrameAsync(ws1, new Frame(Frame.Types.Subscribe, "nodup/#"));
+        await SubscribeAsync(ws1, "nodup/#");
         await Task.Delay(100);
 
         await SendFrameAsync(pub, new Frame(
@@ -796,7 +804,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
 
         // Second connection — same clientId, resubscribe
         using var ws2 = await ConnectAsync("sub-nodup");
-        await SendFrameAsync(ws2, new Frame(Frame.Types.Subscribe, "nodup/#"));
+        await SubscribeAsync(ws2, "nodup/#");
 
         // Should receive exactly ONE delivery — the fresh retained push (replaced stale entry)
         var d2 = await ReceiveFrameAsync(ws2);
@@ -841,7 +849,7 @@ public class BrokerIntegrationTests : IAsyncLifetime
 
         // Subscribe — retained push is QoS 1
         using var sub = await ConnectAsync("sub-ret-qos");
-        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "retqos/#"));
+        await SubscribeAsync(sub, "retqos/#");
 
         var first = await ReceiveFrameAsync(sub);
         Assert.NotNull(first);
@@ -859,5 +867,160 @@ public class BrokerIntegrationTests : IAsyncLifetime
         await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: first.MsgId));
         await Task.Delay(50);
         Assert.Empty(_broker.Qos.GetPending("sub-ret-qos"));
+    }
+
+    // ── PUBACK ──
+
+    [Fact]
+    public async Task Qos1_publish_receives_puback()
+    {
+        using var pub = await ConnectAsync("pub-puback");
+
+        // Publish QoS 1 with MsgId
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "puback/test", Qos: 1,
+            MsgId: "pub-msg-1",
+            Payload: JsonDocument.Parse("1").RootElement));
+
+        // Should receive ACK back with same MsgId
+        var ack = await ReceiveFrameAsync(pub);
+        Assert.NotNull(ack);
+        Assert.Equal(Frame.Types.Ack, ack!.Type);
+        Assert.Equal("pub-msg-1", ack.MsgId);
+    }
+
+    [Fact]
+    public async Task Qos0_publish_no_puback()
+    {
+        using var pub = await ConnectAsync("pub-no-puback");
+
+        // Publish QoS 0 — no ACK expected
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "noack/test", Qos: 0,
+            Payload: JsonDocument.Parse("1").RootElement));
+
+        // Send a PING to verify no ACK is queued ahead of it
+        await SendFrameAsync(pub, new Frame(Frame.Types.Ping));
+
+        var response = await ReceiveFrameAsync(pub);
+        Assert.Equal(Frame.Types.Pong, response!.Type);
+    }
+
+    // ── SUBACK ──
+
+    [Fact]
+    public async Task Subscribe_receives_suback()
+    {
+        using var sub = await ConnectAsync("sub-suback");
+
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "suback/test"));
+
+        var response = await ReceiveFrameAsync(sub);
+        Assert.NotNull(response);
+        Assert.Equal(Frame.Types.SubAck, response!.Type);
+        Assert.Equal("suback/test", response.Topic);
+    }
+
+    [Fact]
+    public async Task Subscribe_suback_before_retained_push()
+    {
+        using var pub = await ConnectAsync("pub-suback-order");
+
+        // Publish retained state first
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "order/topic", Retain: true,
+            Payload: JsonDocument.Parse("99").RootElement));
+        await Task.Delay(100);
+
+        using var sub = await ConnectAsync("sub-suback-order");
+        await SendFrameAsync(sub, new Frame(Frame.Types.Subscribe, "order/#"));
+
+        // SUBACK should come first
+        var first = await ReceiveFrameAsync(sub);
+        Assert.Equal(Frame.Types.SubAck, first!.Type);
+
+        // Then retained state push
+        var second = await ReceiveFrameAsync(sub);
+        Assert.Equal(Frame.Types.Deliver, second!.Type);
+        Assert.True(second.Retained);
+    }
+
+    // ── Retained delete ──
+
+    [Fact]
+    public async Task Publish_empty_payload_deletes_retained()
+    {
+        using var pub = await ConnectAsync("pub-del");
+
+        // Set retained state
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "del/topic", Retain: true,
+            Payload: JsonDocument.Parse("123").RootElement));
+        await Task.Delay(100);
+        Assert.NotNull(_broker.Store.Get("del/topic"));
+
+        // Delete by publishing empty payload with retain
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "del/topic", Retain: true));
+        await Task.Delay(100);
+
+        Assert.Null(_broker.Store.Get("del/topic"));
+    }
+
+    [Fact]
+    public async Task Deleted_retained_not_pushed_on_subscribe()
+    {
+        using var pub = await ConnectAsync("pub-del-sub");
+
+        // Set then delete
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "delsub/topic", Retain: true,
+            Payload: JsonDocument.Parse("1").RootElement));
+        await Task.Delay(50);
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "delsub/topic", Retain: true));
+        await Task.Delay(100);
+
+        // Subscribe — SUBACK but no retained DELIVER (state was deleted)
+        using var sub = await ConnectAsync("sub-del-sub");
+        await SubscribeAsync(sub, "delsub/#");
+
+        // No DELIVER should follow
+        try
+        {
+            var extra = await ReceiveFrameAsync(sub, TimeSpan.FromMilliseconds(500));
+            Assert.True(extra is null, "Should not receive retained state after delete");
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    // ── DUP flag ──
+
+    [Fact]
+    public async Task Retry_sets_dup_flag()
+    {
+        using var sub = await ConnectAsync("sub-dup");
+        using var pub = await ConnectAsync("pub-dup");
+
+        await SubscribeAsync(sub, "dup/test");
+        await Task.Delay(100);
+
+        await SendFrameAsync(pub, new Frame(
+            Frame.Types.Publish, "dup/test", Qos: 1,
+            Payload: JsonDocument.Parse("1").RootElement));
+
+        // First delivery — Dup=false
+        var first = await ReceiveFrameAsync(sub);
+        Assert.NotNull(first);
+        Assert.False(first!.Dup);
+
+        // Don't ACK — wait for retry
+        var retry = await ReceiveFrameAsync(sub, TimeSpan.FromSeconds(2));
+        Assert.NotNull(retry);
+        Assert.True(retry!.Dup);
+        Assert.Equal(first.MsgId, retry.MsgId);
+
+        // ACK to clean up
+        await SendFrameAsync(sub, new Frame(Frame.Types.Ack, MsgId: first.MsgId));
     }
 }

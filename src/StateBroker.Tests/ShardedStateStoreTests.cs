@@ -159,6 +159,31 @@ public class ShardedStateStoreTests : IDisposable
         Assert.Equal("b", all[0].Topic);
     }
 
+    // ── DeleteAsync (WAL integration) ──
+
+    [Fact]
+    public async Task DeleteAsync_removes_through_wal_then_memory()
+    {
+        var wal = new TrackingWalWriter();
+        using var store = new ShardedStateStore(wal: wal);
+
+        await store.SetAsync("t", Json("42"), CancellationToken.None);
+        Assert.NotNull(store.Get("t"));
+
+        await store.DeleteAsync("t", CancellationToken.None);
+        Assert.Null(store.Get("t"));
+    }
+
+    [Fact]
+    public async Task DeleteAsync_nonexistent_is_noop()
+    {
+        var wal = new TrackingWalWriter();
+        using var store = new ShardedStateStore(wal: wal);
+
+        await store.DeleteAsync("nonexistent", CancellationToken.None);
+        Assert.Null(store.Get("nonexistent"));
+    }
+
     // ── SetAsync (WAL integration) ──
 
     [Fact]
@@ -375,6 +400,9 @@ public class ShardedStateStoreTests : IDisposable
             }
             return ValueTask.FromResult(Interlocked.Increment(ref _seq));
         }
+
+        public ValueTask<long> AppendDeleteAsync(string topic, CancellationToken ct) =>
+            ValueTask.FromResult(Interlocked.Increment(ref _seq));
 
         public ValueTask WaitFlushedAsync(long seq, CancellationToken ct)
         {

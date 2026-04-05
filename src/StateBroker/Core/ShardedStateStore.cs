@@ -33,6 +33,14 @@ public sealed class ShardedStateStore : IStateStore, IDisposable
         SetMemory(topic, payload);
     }
 
+    public async ValueTask DeleteAsync(string topic, CancellationToken ct)
+    {
+        var seq = await _wal.AppendDeleteAsync(topic, ct);
+        await _wal.WaitFlushedAsync(seq, ct);
+
+        DeleteMemory(topic);
+    }
+
     public void SetMemory(string topic, JsonElement payload)
     {
         var shard = Pick(topic);

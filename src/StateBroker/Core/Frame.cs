@@ -13,6 +13,7 @@ public sealed record Frame(
     string?     MsgId    = null,
     bool        Retain   = false,
     bool        Retained = false,
+    bool        Dup      = false,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     JsonElement Payload  = default
 )
@@ -21,6 +22,7 @@ public sealed record Frame(
     {
         public const string Publish   = "PUBLISH";
         public const string Subscribe = "SUBSCRIBE";
+        public const string SubAck    = "SUBACK";
         public const string Ack       = "ACK";
         public const string Deliver   = "DELIVER";
         public const string Ping      = "PING";

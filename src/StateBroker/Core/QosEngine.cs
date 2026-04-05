@@ -124,7 +124,7 @@ public sealed class QosEngine : IQosEngine
                 }
 
                 foreach (var frame in pending)
-                    sessions.TrySend(clientId, frame);
+                    sessions.TrySend(clientId, frame with { Dup = true });
 
                 delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, _retryMax.Ticks));
             }
