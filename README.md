@@ -1,12 +1,12 @@
 # State Driven Design — .NET Broker
 
-A minimal, high-performance state broker for distributing desired-state across subscribers via WebSocket. Built for the Video Management Platform (VMP) architecture, where thousands of video devices, streams, and gateways must converge on a shared view of desired vs. current state.
+A minimal, high-performance state broker for distributing desired-state across subscribers via WebSocket. Built for microservice and distributed system architectures where many services, devices, and edge nodes must converge on a shared view of desired vs. current state.
 
 This is not a general-purpose message queue. It is a **state broker** — publishers declare the current state of a topic, subscribers receive that state reliably, and only the latest value per topic matters.
 
 ## Project Milestone
 
-This implementation follows the **State-Driven Design** specification for the Video Management Platform, which defines a two-state-vector model:
+This implementation follows the **State-Driven Design** specification, which defines a two-state-vector model for distributed systems:
 
 - **Desired state** (operator intent): retained at QoS 1, durable, replicated
 - **Current state** (device-reported): retained at QoS 1, convergence tracking
