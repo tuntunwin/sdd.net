@@ -14,8 +14,6 @@ This implementation follows the **State-Driven Design** specification, which def
 
 The design evaluates several architectural approaches (Database-as-SST, NATS JetStream, custom broker) and selects a custom minimal broker as the zero-dependency option for constrained environments (edge deployments, <512MB RAM, no third-party binary policy).
 
-Reference: `vmp-state-driven-design.html`
-
 ### Cross-Platform Support
 
 The broker runs on all platforms supported by .NET 8:
