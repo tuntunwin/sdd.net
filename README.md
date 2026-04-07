@@ -16,6 +16,28 @@ The design evaluates several architectural approaches (Database-as-SST, NATS Jet
 
 Reference: `vmp-state-driven-design.html`
 
+### Cross-Platform Support
+
+The broker runs on all platforms supported by .NET 8:
+
+| Platform | Runtime | NativeAOT | Notes |
+|----------|---------|-----------|-------|
+| **Windows** x64/ARM64 | Yes | Yes | Primary dev platform. `HttpListener` fully supported. |
+| **Linux** x64/ARM64 | Yes | Yes | Production target. Docker scratch images (~35MB). |
+| **macOS** x64/ARM64 (Apple Silicon) | Yes | Yes | Full support since .NET 6. `HttpListener` uses managed sockets (no Windows HTTP.sys dependency). |
+
+NativeAOT produces a single self-contained binary per platform with no runtime dependency:
+
+```bash
+dotnet publish -c Release -r win-x64     -p:PublishAot=true -o dist/win-x64
+dotnet publish -c Release -r linux-x64   -p:PublishAot=true -o dist/linux-x64
+dotnet publish -c Release -r linux-arm64 -p:PublishAot=true -o dist/linux-arm64
+dotnet publish -c Release -r osx-x64     -p:PublishAot=true -o dist/osx-x64
+dotnet publish -c Release -r osx-arm64   -p:PublishAot=true -o dist/osx-arm64
+```
+
+All APIs used (`HttpListener`, `System.Net.WebSockets`, `FileStream`, `System.Threading.Channels`, `System.Text.Json`) are cross-platform BCL types. `InvariantGlobalization=true` eliminates ICU dependency on Linux/macOS. The optional `DotNext.Net.Cluster` Raft library is pure managed C# with no native dependencies.
+
 ### Implementation Progress
 
 | Step | Component | Status |
